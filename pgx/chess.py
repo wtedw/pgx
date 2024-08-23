@@ -27,11 +27,11 @@ from pgx._src.types import Array, PRNGKey
 @dataclass
 class State(core.State):
     current_player: Array = jnp.int32(0)
-    rewards: Array = jnp.float32([0.0, 0.0])
+    rewards: Array = jnp.bfloat16([0.0, 0.0])
     terminated: Array = jnp.bool_(False)
     truncated: Array = jnp.bool_(False)
     legal_action_mask: Array = INIT_LEGAL_ACTION_MASK  # 64 * 73 = 4672
-    observation: Array = jnp.zeros((8, 8, 119), dtype=jnp.float32)
+    observation: Array = jnp.zeros((8, 8, 119), dtype=jnp.bfloat16)
     _step_count: Array = jnp.int32(0)
     _player_order: Array = jnp.int32([0, 1])  # [0, 1] or [1, 0]
     _x: GameState = GameState()
@@ -105,7 +105,6 @@ class Chess(core.Env):
     @property
     def num_players(self) -> int:
         return 2
-
 
 def _from_fen(fen: str):
     from pgx.experimental.chess import from_fen

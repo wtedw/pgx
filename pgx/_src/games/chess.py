@@ -151,13 +151,13 @@ class Game:
     def observe(self, state: GameState, color: Optional[Array] = None) -> Array:
         if color is None:
             color = state.turn
-        ones = jnp.ones((1, 8, 8), dtype=jnp.float32)
+        ones = jnp.ones((1, 8, 8), dtype=jnp.bfloat16)
 
         def make(i):
             board = jnp.rot90(state.board_history[i].reshape((8, 8)), k=1)
 
             def piece_feat(p):
-                return (board == p).astype(jnp.float32)
+                return (board == p).astype(jnp.bfloat16)
 
             my_pieces = jax.vmap(piece_feat)(jnp.arange(1, 7))
             opp_pieces = jax.vmap(piece_feat)(-jnp.arange(1, 7))
@@ -178,7 +178,7 @@ class Game:
                 state.can_castle_king_side[0] * ones,  # my castling right (king side)
                 state.can_castle_queen_side[1] * ones,  # opp castling right (queen side)
                 state.can_castle_king_side[1] * ones,  # opp castling right (king side)
-                (state.halfmove_count.astype(jnp.float32) / 100.0) * ones,  # no progress count
+                (state.halfmove_count.astype(jnp.bfloat16) / 100.0) * ones,  # no progress count
             ]
         ).transpose((1, 2, 0))
 
@@ -198,8 +198,8 @@ class Game:
         is_checkmate = (~state.legal_action_mask.any()) & _is_checked(state)
         return jax.lax.select(
             is_checkmate,
-            jnp.ones(2, dtype=jnp.float32).at[state.turn].set(-1),
-            jnp.zeros(2, dtype=jnp.float32),
+            jnp.ones(2, dtype=jnp.bfloat16).at[state.turn].set(-1),
+            jnp.zeros(2, dtype=jnp.bfloat16),
         )
 
 
