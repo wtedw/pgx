@@ -1,4 +1,4 @@
-from typing import Optional, Protocol, TypeVar, runtime_checkable
+from typing import Optional, Protocol, Tuple, TypeVar, runtime_checkable
 
 from jax import Array
 
@@ -17,6 +17,6 @@ class GameProtocol(Protocol[T]):
 
     def legal_action_mask(self, state: T) -> Array: ...
 
-    def is_terminal(self, state: T) -> Array: ...
+    def is_terminal(self, state: T) ->  Tuple[Array, Array]: ...
 
     def rewards(self, state: T) -> Array: ...

@@ -29,6 +29,7 @@ class State(core.State):
     current_player: Array = jnp.int32(0)
     rewards: Array = jnp.bfloat16([0.0, 0.0])
     terminated: Array = jnp.bool_(False)
+    termination_reason: Array = jnp.bool_([False, False, False, False, False])
     truncated: Array = jnp.bool_(False)
     legal_action_mask: Array = INIT_LEGAL_ACTION_MASK  # 64 * 73 = 4672
     observation: Array = jnp.zeros((8, 8, 119), dtype=jnp.bfloat16)
@@ -79,10 +80,12 @@ class Chess(core.Env):
         del key
         assert isinstance(state, State)
         x = self.game.step(state._x, action)
+        terminated, termination_reason = self.game.is_terminal(x)
         state = state.replace(  # type: ignore
             _x=x,
             legal_action_mask=x.legal_action_mask,
-            terminated=self.game.is_terminal(x),
+            terminated=terminated,
+            termination_reason=termination_reason,
             rewards=self.game.rewards(x)[state._player_order],
             current_player=state._player_order[x.turn],
         )

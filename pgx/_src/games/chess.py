@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from typing import NamedTuple, Optional
+from typing import NamedTuple, Tuple, Optional
 
 import jax
 import jax.numpy as jnp
@@ -185,14 +185,29 @@ class Game:
     def legal_action_mask(self, state: GameState) -> Array:
         return state.legal_action_mask
 
-    def is_terminal(self, state: GameState) -> Array:
-        terminated = ~state.legal_action_mask.any()
-        terminated |= state.halfmove_count >= 100
-        terminated |= has_insufficient_pieces(state)
+    def is_terminal(self, state: GameState) -> Tuple[Array, Array]:
+        reason_no_moves = ~state.legal_action_mask.any()
+        reason_halfmove_count = state.halfmove_count >= 100
+        reason_insufficient = has_insufficient_pieces(state)
         rep = (state.hash_history == state.zobrist_hash).all(axis=1).sum() - 1
-        terminated |= rep >= 2
-        terminated |= MAX_TERMINATION_STEPS <= state.step_count
-        return terminated
+        reason_3rep = rep >= 2
+        reason_max_steps = MAX_TERMINATION_STEPS <= state.step_count
+
+        terminated = reason_no_moves
+        terminated |= reason_halfmove_count
+        terminated |= reason_insufficient
+        terminated |= reason_3rep
+        terminated |= reason_max_steps
+
+        termination_reason = jnp.array([
+            reason_no_moves,
+            reason_halfmove_count,
+            reason_insufficient,
+            reason_3rep,
+            reason_max_steps
+        ], dtype=jnp.bool_)
+
+        return terminated, termination_reason
 
     def rewards(self, state: GameState) -> Array:
         is_checkmate = (~state.legal_action_mask.any()) & _is_checked(state)
