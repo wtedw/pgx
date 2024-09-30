@@ -44,6 +44,7 @@ def auto_reset(step_fn, init_fn):
             (state.terminated | state.truncated),
             lambda: state.replace(  # type: ignore
                 terminated=FALSE,
+                termination_reason=jnp.zeros_like(state.termination_reason),
                 truncated=FALSE,
                 rewards=jnp.zeros_like(state.rewards),
             ),
