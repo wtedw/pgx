@@ -56,6 +56,7 @@ def auto_reset(step_fn, init_fn):
             # but preserve (terminated, truncated, reward)
             lambda: init_fn(key2).replace(  # type: ignore
                 terminated=state.terminated,
+                termination_reason=state.termination_reason,
                 truncated=state.truncated,
                 rewards=state.rewards,
             ),
