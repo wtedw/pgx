@@ -182,6 +182,49 @@ class Game:
             ]
         ).transpose((1, 2, 0))
 
+    def observe2(self, state: GameState, color: Optional[Array] = None) -> tuple[Array, Array]:
+        if color is None:
+            color = state.turn
+        ones = jnp.ones((1, 8, 8), dtype=jnp.bfloat16)
+
+        def make(i):
+            board = jnp.rot90(state.board_history[i].reshape((8, 8)), k=1)
+
+            def piece_feat(p):
+                return (board == p).astype(jnp.bfloat16)
+
+            my_pieces = jax.vmap(piece_feat)(jnp.arange(1, 7))
+            opp_pieces = jax.vmap(piece_feat)(-jnp.arange(1, 7))
+
+            h = state.hash_history[i, :]
+            rep = (state.hash_history == h).all(axis=1).sum() - 1
+            rep = jax.lax.select((h == 0).all(), 0, rep)
+            rep0 = ones * (rep == 0)
+            rep1 = ones * (rep >= 1)
+            return jnp.vstack([my_pieces, opp_pieces, rep0, rep1])
+
+        arr1 = jnp.vstack(
+            [
+                jax.vmap(make)(jnp.arange(8)).reshape(-1, 8, 8),  # board feature
+                color * ones,  # color
+                state.can_castle_queen_side[0] * ones,  # my castling right (queen side)
+                state.can_castle_king_side[0] * ones,  # my castling right (king side)
+                state.can_castle_queen_side[1] * ones,  # opp castling right (queen side)
+                state.can_castle_king_side[1] * ones,  # opp castling right (king side)
+                (state.step_count / MAX_TERMINATION_STEPS) * ones,  # total move count
+                (state.halfmove_count.astype(jnp.bfloat16) / 100.0) * ones,  # no progress count
+            ]
+        ).transpose((1, 2, 0))
+
+        arr2 = jnp.vstack(
+            [
+                (state.step_count / MAX_TERMINATION_STEPS) * ones,  # total move count
+                (state.halfmove_count.astype(jnp.bfloat16) / 100.0) * ones,  # no progress count
+            ]
+        ).transpose((1, 2, 0))
+
+        return arr1, arr2
+
     def legal_action_mask(self, state: GameState) -> Array:
         return state.legal_action_mask
 
