@@ -83,6 +83,8 @@ class State(abc.ABC):
             This ID is consistent over the parallel vmapped states.
         observation (Array): observation for the current state.
             `Env.observe` is called to compute.
+        obsbool (Array):
+        obsfloat (Array):
         rewards (Array): the `i`-th element indicates the intermediate reward for
             the agent with player-id `i`. If `Env.step` is called for a terminal state,
             the following `state.rewards` is zero for all players.
@@ -99,6 +101,8 @@ class State(abc.ABC):
 
     current_player: Array
     observation: Array
+    obsbool: Array
+    obsfloat: Array
     rewards: Array
     terminated: Array
     truncated: Array
@@ -185,7 +189,8 @@ class Env(abc.ABC):
         """
         state = self._init(key)
         observation = self.observe(state, state.current_player)
-        return state.replace(observation=observation)  # type: ignore
+        obsbool, obsfloat = self.observe2(state, state.current_player)
+        return state.replace(observation=observation, obsbool=obsbool, obsfloat=obsfloat)  # type: ignore
 
     def step(
         self,
@@ -221,8 +226,12 @@ class Env(abc.ABC):
             lambda: state,
         )
 
+        # observation = self.observe(state, state.current_player)
+        # state = state.replace(observation=observation)  # type: ignore
+
         observation = self.observe(state, state.current_player)
-        state = state.replace(observation=observation)  # type: ignore
+        obsbool, obsfloat = self.observe2(state, state.current_player)
+        state = state.replace(observation=observation, obsbool=obsbool, obsfloat=obsfloat)  # type: ignore
 
         return state
 
@@ -230,6 +239,11 @@ class Env(abc.ABC):
         """Observation function."""
         obs = self._observe(state, player_id)
         return jax.lax.stop_gradient(obs)
+
+    def observe2(self, state: State, player_id: Array) -> Tuple[Array, Array]:
+        """Observation function."""
+        obs2 = self._observe2(state, player_id)
+        return jax.lax.stop_gradient(obs2)
 
     @abc.abstractmethod
     def _init(self, key: PRNGKey) -> State:
@@ -243,6 +257,11 @@ class Env(abc.ABC):
 
     @abc.abstractmethod
     def _observe(self, state: State, player_id: Array) -> Array:
+        """Implement game-specific observe function here."""
+        ...
+
+    @abc.abstractmethod
+    def _observe2(self, state: State, player_id: Array) -> Array:
         """Implement game-specific observe function here."""
         ...
 

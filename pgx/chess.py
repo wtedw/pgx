@@ -97,6 +97,12 @@ class Chess(core.Env):
         x = jax.lax.cond(state.current_player == player_id, lambda: state._x, lambda: _flip(state._x))
         return self.game.observe(x, color)
 
+    def _observe2(self, state: core.State, player_id: Array) -> tuple[Array, Array]:
+        assert isinstance(state, State)
+        color = jax.lax.select(state.current_player == player_id, state._x.turn, 1 - state._x.turn)
+        x = jax.lax.cond(state.current_player == player_id, lambda: state._x, lambda: _flip(state._x))
+        return self.game.observe2(x, color)
+
     @property
     def id(self) -> core.EnvId:
         return "chess"
