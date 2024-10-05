@@ -246,12 +246,14 @@ class Game:
             def piece_feat(p):
                 return (board == p)
             my_pieces = jax.vmap(piece_feat)(jnp.arange(1, 7))
+            print(">>my piece shape", my_pieces.shape, my_pieces.dtype)
             opp_pieces = jax.vmap(piece_feat)(-jnp.arange(1, 7))
+            print(">>opp piece shape", opp_pieces.shape, opp_pieces.dtype)
             h = state.hash_history[i, :]
             rep = (state.hash_history == h).all(axis=1).sum() - 1
             rep = jax.lax.select((h == 0).all(), 0, rep)
-            rep0 = rep == 0
-            rep1 = rep >= 1
+            rep0 = jnp.full((1, 8, 8), rep == 0)
+            rep1 = jnp.full((1, 8, 8), rep >= 1)
             return jnp.vstack([my_pieces, opp_pieces, rep0, rep1])
 
 
