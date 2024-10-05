@@ -185,13 +185,15 @@ class Game:
     def observe2(self, state: GameState, color: Optional[Array] = None) -> tuple[Array, Array]:
         if color is None:
             color = state.turn
-        ones = jnp.ones((1, 8, 8), dtype=jnp.bfloat16)
+
+        color = jnp.bool_(color)
+        ones = jnp.ones((1, 8, 8), dtype=jnp.bool_)
 
         def make(i):
             board = jnp.rot90(state.board_history[i].reshape((8, 8)), k=1)
 
             def piece_feat(p):
-                return (board == p).astype(jnp.bfloat16)
+                return (board == p)
 
             my_pieces = jax.vmap(piece_feat)(jnp.arange(1, 7))
             opp_pieces = jax.vmap(piece_feat)(-jnp.arange(1, 7))
@@ -203,6 +205,14 @@ class Game:
             rep1 = ones * (rep >= 1)
             return jnp.vstack([my_pieces, opp_pieces, rep0, rep1])
 
+        a1 = jax.vmap(make)(jnp.arange(8)).reshape(-1, 8, 8)
+        a2 = color * ones
+        a3 = state.can_castle_queen_side[0] * ones
+        a4 = state.can_castle_king_side[0] * ones,  # my castling right (king side)
+        a5 = state.can_castle_queen_side[1] * ones,  # opp castling right (queen side)
+        a6 = state.can_castle_king_side[1] * ones,  # opp castling right (king side)
+
+
         arr1 = jnp.vstack(
             [
                 jax.vmap(make)(jnp.arange(8)).reshape(-1, 8, 8),  # board feature
@@ -211,8 +221,6 @@ class Game:
                 state.can_castle_king_side[0] * ones,  # my castling right (king side)
                 state.can_castle_queen_side[1] * ones,  # opp castling right (queen side)
                 state.can_castle_king_side[1] * ones,  # opp castling right (king side)
-                (state.step_count / MAX_TERMINATION_STEPS) * ones,  # total move count
-                (state.halfmove_count.astype(jnp.bfloat16) / 100.0) * ones,  # no progress count
             ]
         ).transpose((1, 2, 0))
 
@@ -220,6 +228,55 @@ class Game:
             [
                 (state.step_count / MAX_TERMINATION_STEPS) * ones,  # total move count
                 (state.halfmove_count.astype(jnp.bfloat16) / 100.0) * ones,  # no progress count
+            ]
+        ).transpose((1, 2, 0))
+
+        return arr1, arr2
+
+    def observe2(self, state: GameState, color: Optional[Array] = None) -> tuple[Array, Array]:
+        if color is None:
+            color = state.turn
+
+        # Convert color to boolean early
+        color_bool = jnp.bool_(color)
+        ones = jnp.ones((1, 8, 8), dtype=jnp.bool_)
+
+        def make(i):
+            board = jnp.rot90(state.board_history[i].reshape((8, 8)), k=1)
+            def piece_feat(p):
+                return (board == p)
+            my_pieces = jax.vmap(piece_feat)(jnp.arange(1, 7))
+            opp_pieces = jax.vmap(piece_feat)(-jnp.arange(1, 7))
+            h = state.hash_history[i, :]
+            rep = (state.hash_history == h).all(axis=1).sum() - 1
+            rep = jax.lax.select((h == 0).all(), 0, rep)
+            rep0 = rep == 0
+            rep1 = rep >= 1
+            return jnp.vstack([my_pieces, opp_pieces, rep0, rep1])
+
+
+        a1 = jax.vmap(make)(jnp.arange(8)).reshape(-1, 8, 8),  # board feature
+        a2 = jnp.full((1, 8, 8), color_bool),  # color
+        a3 = jnp.full((1, 8, 8), state.can_castle_queen_side[0]),  # my castling right (queen side)
+        a4 = jnp.full((1, 8, 8), state.can_castle_king_side[0]),  # my castling right (king side)
+        a5 = jnp.full((1, 8, 8), state.can_castle_queen_side[1]),  # opp castling right (queen side)
+        a6 = jnp.full((1, 8, 8), state.can_castle_king_side[1]),  # opp castling right (king side)
+
+        print("subarray shape", a1.shape, a2.shape, a3.shape, a4.shape, a5.shape, a6.shape)
+        print("subarray dtype", a1.dtype, a2.dtype, a3.dtype, a4.dtype, a5.dtype, a6.dtype)
+        print("color shape + dtype", color.shape, color.dtype)
+        print("can castle shape + dtype", state.can_castle_queen_side.shape, state.can_castle_queen_side.dtype)
+
+        arr1 = jnp.vstack(
+            [
+                a1, a2, a3, a4, a5, a6
+            ]
+        ).transpose((1, 2, 0))
+
+        arr2 = jnp.vstack(
+            [
+                jnp.full((1, 8, 8), state.step_count / MAX_TERMINATION_STEPS, dtype=jnp.bfloat16),  # total move count
+                jnp.full((1, 8, 8), state.halfmove_count.astype(jnp.bfloat16) / 100.0, dtype=jnp.bfloat16),  # no progress count
             ]
         ).transpose((1, 2, 0))
 
