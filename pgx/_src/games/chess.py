@@ -257,12 +257,12 @@ class Game:
             return jnp.vstack([my_pieces, opp_pieces, rep0, rep1])
 
 
-        a1 = jax.vmap(make)(jnp.arange(8)).reshape(-1, 8, 8),  # board feature
-        a2 = jnp.full((1, 8, 8), color_bool),  # color
-        a3 = jnp.full((1, 8, 8), state.can_castle_queen_side[0]),  # my castling right (queen side)
-        a4 = jnp.full((1, 8, 8), state.can_castle_king_side[0]),  # my castling right (king side)
-        a5 = jnp.full((1, 8, 8), state.can_castle_queen_side[1]),  # opp castling right (queen side)
-        a6 = jnp.full((1, 8, 8), state.can_castle_king_side[1]),  # opp castling right (king side)
+        a1 = jax.vmap(make)(jnp.arange(8)).reshape(-1, 8, 8)  # board feature
+        a2 = jnp.full((1, 8, 8), color_bool)  # color
+        a3 = jnp.full((1, 8, 8), state.can_castle_queen_side[0])  # my castling right (queen side)
+        a4 = jnp.full((1, 8, 8), state.can_castle_king_side[0])  # my castling right (king side)
+        a5 = jnp.full((1, 8, 8), state.can_castle_queen_side[1])  # opp castling right (queen side)
+        a6 = jnp.full((1, 8, 8), state.can_castle_king_side[1])  # opp castling right (king side)
 
         print("subarray shape", a1.shape, a2.shape, a3.shape, a4.shape, a5.shape, a6.shape)
         print("subarray dtype", a1.dtype, a2.dtype, a3.dtype, a4.dtype, a5.dtype, a6.dtype)
