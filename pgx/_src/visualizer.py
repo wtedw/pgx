@@ -385,7 +385,7 @@ class Visualizer:
                     "black",
                     "",
                 )
-        elif _state.env_id == "hex":
+        elif _state.env_id.startswith("hex"):
             import jax.numpy as jnp
 
             from pgx._src.dwg.hex import _make_hex_dwg, four_dig
