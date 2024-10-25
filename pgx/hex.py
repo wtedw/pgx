@@ -19,6 +19,9 @@ import pgx.core as core
 from pgx._src.struct import dataclass
 from pgx._src.types import Array, PRNGKey
 
+FALSE = jnp.bool_(False)
+TRUE = jnp.bool_(True)
+
 @dataclass
 class State(core.State):
     current_player: Array = jnp.int32(0)
