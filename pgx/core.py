@@ -364,10 +364,38 @@ def make(env_id: EnvId):  # noqa: C901
         from pgx.go import Go
 
         return Go(size=19, komi=7.5)
+    elif env_id == "hex_3x3":
+        from pgx.hex import Hex
+
+        return Hex(size=3)
+    elif env_id == "hex_4x4":
+        from pgx.hex import Hex
+
+        return Hex(size=4)
+    elif env_id == "hex_5x5":
+        from pgx.hex import Hex
+
+        return Hex(size=5)
+    elif env_id == "hex_6x6":
+        from pgx.hex import Hex
+
+        return Hex(size=6)
+    elif env_id == "hex_7x7":
+        from pgx.hex import Hex
+
+        return Hex(size=7)
+    elif env_id == "hex_8x8":
+        from pgx.hex import Hex
+
+        return Hex(size=8)
+    elif env_id == "hex_9x9":
+        from pgx.hex import Hex
+
+        return Hex(size=9)
     elif env_id == "hex":
         from pgx.hex import Hex
 
-        return Hex()
+        return Hex(size=11)
     elif env_id == "kuhn_poker":
         from pgx.kuhn_poker import KuhnPoker
 

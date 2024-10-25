@@ -11,55 +11,50 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-
 from functools import partial
-
 import jax
 import jax.numpy as jnp
-
+from typing import Literal
 import pgx.core as core
 from pgx._src.struct import dataclass
 from pgx._src.types import Array, PRNGKey
 
-FALSE = jnp.bool_(False)
-TRUE = jnp.bool_(True)
-
-
 @dataclass
 class State(core.State):
     current_player: Array = jnp.int32(0)
-    observation: Array = jnp.zeros((11, 11, 2), dtype=jnp.bool_)
+    observation: Array = None  # Will be set based on size
     rewards: Array = jnp.float32([0.0, 0.0])
     terminated: Array = FALSE
     truncated: Array = FALSE
-    legal_action_mask: Array = jnp.ones(11 * 11 + 1, dtype=jnp.bool_).at[-1].set(FALSE)
+    legal_action_mask: Array = None  # Will be set based on size
     _step_count: Array = jnp.int32(0)
     # --- Hex specific ---
-    _size: Array = jnp.int32(11)
-    # 0(black), 1(white)
+    _size: Array = None  # Will be set based on size
     _turn: Array = jnp.int32(0)
-    # 11x11 board
-    # [[  0,  1,  2,  ...,  8,  9, 10],
-    #  [ 11,  12, 13, ..., 19, 20, 21],
-    #  .
-    #  .
-    #  .
-    #  [110, 111, 112, ...,  119, 120]]
-    _board: Array = jnp.zeros(11 * 11, jnp.int32)  # <0(oppo), 0(empty), 0<(self)
+    _board: Array = None  # Will be set based on size
 
     @property
     def env_id(self) -> core.EnvId:
-        return "hex"
-
+        return f"hex_{self._size}x{self._size}"
 
 class Hex(core.Env):
     def __init__(self, *, size: int = 11):
         super().__init__()
         assert isinstance(size, int)
+        assert 3 <= size <= 11, "Hex board size must be between 3 and 11"
         self.size = size
 
     def _init(self, key: PRNGKey) -> State:
-        return partial(_init, size=self.size)(rng=key)
+        current_player = jnp.int32(jax.random.bernoulli(key))
+        # Initialize state with proper size
+        size = self.size
+        return State(
+            current_player=current_player,
+            observation=jnp.zeros((size, size, 4), dtype=jnp.bool_),
+            legal_action_mask=jnp.ones(size * size + 1, dtype=jnp.bool_).at[-1].set(FALSE),
+            _size=jnp.int32(size),
+            _board=jnp.zeros(size * size, jnp.int32)
+        )
 
     def _step(self, state: core.State, action: Array, key) -> State:
         del key
@@ -76,7 +71,7 @@ class Hex(core.Env):
 
     @property
     def id(self) -> core.EnvId:
-        return "hex"
+        return f"hex_{self.size}x{self.size}"
 
     @property
     def version(self) -> str:
@@ -86,11 +81,9 @@ class Hex(core.Env):
     def num_players(self) -> int:
         return 2
 
-
-def _init(rng: PRNGKey, size: int) -> State:
-    current_player = jnp.int32(jax.random.bernoulli(rng))
-    return State(_size=size, current_player=current_player)  # type:ignore
-
+# def _init(rng: PRNGKey, size: int) -> State:
+#     current_player = jnp.int32(jax.random.bernoulli(rng))
+#     return State(_size=size, current_player=current_player)  # type:ignore
 
 def _step(state: State, action: Array, size: int) -> State:
     set_place_id = action + 1
