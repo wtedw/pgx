@@ -55,6 +55,14 @@ EnvId = Literal[
     "hex_8x8",
     "hex_9x9",
     "hex",
+    "hexnoswap_3x3",
+    "hexnoswap_4x4",
+    "hexnoswap_5x5",
+    "hexnoswap_6x6",
+    "hexnoswap_7x7",
+    "hexnoswap_8x8",
+    "hexnoswap_9x9",
+    "hexnoswap",
     "kuhn_poker",
     "leduc_holdem",
     # "mahjong",
@@ -403,6 +411,30 @@ def make(env_id: EnvId):  # noqa: C901
         from pgx.hex import Hex
 
         return Hex(size=11)
+    elif env_id == "hexnoswap_3x3":
+        from pgx.hexnoswap import Hexnoswap
+        return Hexnoswap(size=3)
+    elif env_id == "hexnoswap_4x4":
+        from pgx.hexnoswap import Hexnoswap
+        return Hexnoswap(size=4)
+    elif env_id == "hexnoswap_5x5":
+        from pgx.hexnoswap import Hexnoswap
+        return Hexnoswap(size=5)
+    elif env_id == "hexnoswap_6x6":
+        from pgx.hexnoswap import Hexnoswap
+        return Hexnoswap(size=6)
+    elif env_id == "hexnoswap_7x7":
+        from pgx.hexnoswap import Hexnoswap
+        return Hexnoswap(size=7)
+    elif env_id == "hexnoswap_8x8":
+        from pgx.hexnoswap import Hexnoswap
+        return Hexnoswap(size=8)
+    elif env_id == "hexnoswap_9x9":
+        from pgx.hexnoswap import Hexnoswap
+        return Hexnoswap(size=9)
+    elif env_id == "hexnoswap":
+        from pgx.hexnoswap import Hexnoswap
+        return Hexnoswap(size=11)
     elif env_id == "kuhn_poker":
         from pgx.kuhn_poker import KuhnPoker
 
