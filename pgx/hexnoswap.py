@@ -93,7 +93,7 @@ def _step(state: State, action: Array, size: int) -> State:
         _board=board * -1,
         rewards=reward,
         terminated=won,
-        legal_action_mask=state.legal_action_mask.set(board == 0),
+        legal_action_mask=state.legal_action_mask.at[:].set(board == 0),
     )
 
     return state
