@@ -27,7 +27,7 @@ class State(core.State):
     def env_id(self) -> core.EnvId:
         return f"hexnoswap_{self._size}x{self._size}"
 
-class Hex(core.Env):
+class Hexnoswap(core.Env):
     def __init__(self, *, size: int = 11):
         super().__init__()
         assert isinstance(size, int)
