@@ -31,7 +31,7 @@ class Hexnoswap(core.Env):
     def __init__(self, *, size: int = 11):
         super().__init__()
         assert isinstance(size, int)
-        assert 3 <= size <= 11, "Hex board size must be between 3 and 11"
+        assert 3 <= size <= 17, "Hex board size must be between 3 and 17"
         self.size = size
 
     def _init(self, key: PRNGKey) -> State:
