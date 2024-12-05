@@ -129,12 +129,13 @@ FROM_PLANE, TO_PLANE, INIT_LEGAL_ACTION_MASK, LEGAL_DEST, LEGAL_DEST_NEAR, LEGAL
     jnp.array(x) for x in (FROM_PLANE, TO_PLANE, INIT_LEGAL_ACTION_MASK, LEGAL_DEST, LEGAL_DEST_NEAR, LEGAL_DEST_FAR, CAN_MOVE, BETWEEN)
 )
 
-keys = jax.random.split(jax.random.PRNGKey(12345), 4)
-ZOBRIST_BOARD = jax.random.randint(keys[0], shape=(64, 13, 2), minval=0, maxval=2**31 - 1, dtype=jnp.uint32)
-ZOBRIST_SIDE = jax.random.randint(keys[1], shape=(2,), minval=0, maxval=2**31 - 1, dtype=jnp.uint32)
-ZOBRIST_CASTLING = jax.random.randint(keys[2], shape=(4, 2), minval=0, maxval=2**31 - 1, dtype=jnp.uint32)
-ZOBRIST_EN_PASSANT = jax.random.randint(keys[3], shape=(65, 2), minval=0, maxval=2**31 - 1, dtype=jnp.uint32)
-INIT_ZOBRIST_HASH = jnp.uint32([1455170221, 1478960862])
+# [zobrist]
+# keys = jax.random.split(jax.random.PRNGKey(12345), 4)
+# ZOBRIST_BOARD = jax.random.randint(keys[0], shape=(64, 13, 2), minval=0, maxval=2**31 - 1, dtype=jnp.uint32)
+# ZOBRIST_SIDE = jax.random.randint(keys[1], shape=(2,), minval=0, maxval=2**31 - 1, dtype=jnp.uint32)
+# ZOBRIST_CASTLING = jax.random.randint(keys[2], shape=(4, 2), minval=0, maxval=2**31 - 1, dtype=jnp.uint32)
+# ZOBRIST_EN_PASSANT = jax.random.randint(keys[3], shape=(65, 2), minval=0, maxval=2**31 - 1, dtype=jnp.uint32)
+# INIT_ZOBRIST_HASH = jnp.uint32([1455170221, 1478960862])
 
 
 class GameState(NamedTuple):
@@ -144,7 +145,8 @@ class GameState(NamedTuple):
     en_passant: Array = jnp.int32(-1)
     halfmove_count: Array = jnp.int32(0)  # number of moves since the last piece capture or pawn move
     fullmove_count: Array = jnp.int32(1)  # increase every black move
-    hash_history: Array = jnp.zeros((MAX_TERMINATION_STEPS + 1, 2), dtype=jnp.uint32).at[0].set(INIT_ZOBRIST_HASH)
+    # [zobrist]
+    # hash_history: Array = jnp.zeros((MAX_TERMINATION_STEPS + 1, 2), dtype=jnp.uint32).at[0].set(INIT_ZOBRIST_HASH)
     board_history: Array = jnp.zeros((8, 64), dtype=jnp.int32).at[0, :].set(INIT_BOARD)
     legal_action_mask: Array = INIT_LEGAL_ACTION_MASK
     step_count: Array = jnp.int32(0)
@@ -191,12 +193,14 @@ class Game:
             my_pieces = jax.vmap(piece_feat)(jnp.arange(1, 7))
             opp_pieces = jax.vmap(piece_feat)(-jnp.arange(1, 7))
 
-            h = state.hash_history[i, :]
-            rep = (state.hash_history == h).all(axis=1).sum() - 1
-            rep = lax.select((h == 0).all(), 0, rep)
-            rep0 = ones * (rep == 0)
-            rep1 = ones * (rep >= 1)
-            return jnp.vstack([my_pieces, opp_pieces, rep0, rep1])
+            # [zobrist]
+            # h = state.hash_history[i, :]
+            # rep = (state.hash_history == h).all(axis=1).sum() - 1
+            # rep = lax.select((h == 0).all(), 0, rep)
+            # rep0 = ones * (rep == 0)
+            # rep1 = ones * (rep >= 1)
+            # return jnp.vstack([my_pieces, opp_pieces, rep0, rep1])
+            return jnp.vstack([my_pieces, opp_pieces])
 
         return jnp.vstack(
             [
@@ -215,8 +219,9 @@ class Game:
         terminated = ~state.legal_action_mask.any()
         terminated |= state.halfmove_count >= 100
         terminated |= has_insufficient_pieces(state)
-        rep = (state.hash_history == _zobrist_hash(state)).all(axis=1).sum() - 1
-        terminated |= rep >= 2
+        # [zobrist]
+        # rep = (state.hash_history == _zobrist_hash(state)).all(axis=1).sum() - 1
+        # terminated |= rep >= 2
         terminated |= MAX_TERMINATION_STEPS <= state.step_count
         return terminated
 
@@ -232,9 +237,11 @@ class Game:
 def _update_history(state: GameState):
     board_history = jnp.roll(state.board_history, 64)
     board_history = board_history.at[0].set(state.board)
-    hash_hist = jnp.roll(state.hash_history, 2)
-    hash_hist = hash_hist.at[0].set(_zobrist_hash(state))
-    return state._replace(board_history=board_history, hash_history=hash_hist)
+    # [zobrist]
+    # hash_hist = jnp.roll(state.hash_history, 2)
+    # hash_hist = hash_hist.at[0].set(_zobrist_hash(state))
+    # return state._replace(board_history=board_history, hash_history=hash_hist)
+    return state._replace(board_history=board_history)
 
 
 def has_insufficient_pieces(state: GameState):
@@ -401,12 +408,12 @@ def _is_checked(state: GameState):
     king_pos = jnp.argmin(jnp.abs(state.board - KING))
     return _is_attacked(state, king_pos)
 
-
-def _zobrist_hash(state: GameState) -> Array:
-    hash_ = lax.select(state.color == 0, ZOBRIST_SIDE, jnp.zeros_like(ZOBRIST_SIDE))
-    to_reduce = ZOBRIST_BOARD[jnp.arange(64), state.board + 6]  # 0, ..., 12 (w:pawn, ..., b:king)
-    hash_ ^= lax.reduce(to_reduce, 0, lax.bitwise_xor, (0,))
-    to_reduce = jnp.where(state.castling_rights.reshape(-1, 1), ZOBRIST_CASTLING, 0)
-    hash_ ^= lax.reduce(to_reduce, 0, lax.bitwise_xor, (0,))
-    hash_ ^= ZOBRIST_EN_PASSANT[state.en_passant]
-    return hash_
+# [zobrist]
+# def _zobrist_hash(state: GameState) -> Array:
+#     hash_ = lax.select(state.color == 0, ZOBRIST_SIDE, jnp.zeros_like(ZOBRIST_SIDE))
+#     to_reduce = ZOBRIST_BOARD[jnp.arange(64), state.board + 6]  # 0, ..., 12 (w:pawn, ..., b:king)
+#     hash_ ^= lax.reduce(to_reduce, 0, lax.bitwise_xor, (0,))
+#     to_reduce = jnp.where(state.castling_rights.reshape(-1, 1), ZOBRIST_CASTLING, 0)
+#     hash_ ^= lax.reduce(to_reduce, 0, lax.bitwise_xor, (0,))
+#     hash_ ^= ZOBRIST_EN_PASSANT[state.en_passant]
+#     return hash_
