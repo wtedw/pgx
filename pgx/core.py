@@ -377,10 +377,70 @@ def make(env_id: EnvId):  # noqa: C901
         from pgx.gardner_chess import GardnerChess
 
         return GardnerChess()
+    elif env_id == "go_3x3":
+        from pgx.go import Go
+
+        return Go(size=3, komi=7.5)
+    elif env_id == "go_4x4":
+        from pgx.go import Go
+
+        return Go(size=4, komi=7.5)
+    elif env_id == "go_5x5":
+        from pgx.go import Go
+
+        return Go(size=5, komi=7.5)
+    elif env_id == "go_6x6":
+        from pgx.go import Go
+
+        return Go(size=6, komi=7.5)
+    elif env_id == "go_7x7":
+        from pgx.go import Go
+
+        return Go(size=7, komi=7.5)
+    elif env_id == "go_8x8":
+        from pgx.go import Go
+
+        return Go(size=8, komi=7.5)
     elif env_id == "go_9x9":
         from pgx.go import Go
 
         return Go(size=9, komi=7.5)
+    elif env_id == "go_10x10":
+        from pgx.go import Go
+
+        return Go(size=10, komi=7.5)
+    elif env_id == "go_11x11":
+        from pgx.go import Go
+
+        return Go(size=11, komi=7.5)
+    elif env_id == "go_12x12":
+        from pgx.go import Go
+
+        return Go(size=12, komi=7.5)
+    elif env_id == "go_13x13":
+        from pgx.go import Go
+
+        return Go(size=13, komi=7.5)
+    elif env_id == "go_14x14":
+        from pgx.go import Go
+
+        return Go(size=14, komi=7.5)
+    elif env_id == "go_15x15":
+        from pgx.go import Go
+
+        return Go(size=15, komi=7.5)
+    elif env_id == "go_16x16":
+        from pgx.go import Go
+
+        return Go(size=16, komi=7.5)
+    elif env_id == "go_17x17":
+        from pgx.go import Go
+
+        return Go(size=17, komi=7.5)
+    elif env_id == "go_18x18":
+        from pgx.go import Go
+
+        return Go(size=18, komi=7.5)
     elif env_id == "go_19x19":
         from pgx.go import Go
 
