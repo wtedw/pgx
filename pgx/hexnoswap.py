@@ -29,7 +29,7 @@ class State(core.State):
         return f"hexnoswap_{self._size}x{self._size}"
 
 class Hexnoswap(core.Env):
-    def __init__(self, *, size: int = 11, history_length: int = 7):
+    def __init__(self, *, size: int = 11, history_length: int = 4):
         super().__init__()
         assert isinstance(size, int)
         assert 3 <= size <= 17, "Hex board size must be between 3 and 17"
