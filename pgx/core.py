@@ -411,7 +411,7 @@ def make(env_id: EnvId):  # noqa: C901
     elif env_id == "go_7x7":
         from pgx.go import Go
 
-        return Go(size=7, komi=7.5)
+        return Go(size=7, komi=9.0)
     elif env_id == "go_8x8":
         from pgx.go import Go
 
