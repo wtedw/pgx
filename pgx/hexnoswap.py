@@ -68,7 +68,10 @@ class Hexnoswap(core.Env):
 
 def _step(state: State, action: Array, size: int) -> State:
     set_place_id = action + 1
-    board = state._board.at[action].set(set_place_id)
+    one_hot_action = jax.nn.one_hot(action, state._board.size, dtype=state._board.dtype)
+    board = state._board + one_hot_action * set_place_id
+
+
     neighbour = _neighbour(action, size)
 
     def merge(i, b):
@@ -83,7 +86,7 @@ def _step(state: State, action: Array, size: int) -> State:
     won = _is_game_end(board, size, state._turn)
     reward = jax.lax.cond(
         won,
-        lambda: jnp.float32([-1, -1]).at[state.current_player].set(1),
+        lambda: jnp.ones(2, jnp.float32),
         lambda: jnp.zeros(2, jnp.float32),
     )
 
