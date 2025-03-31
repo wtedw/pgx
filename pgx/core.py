@@ -322,8 +322,7 @@ class Env(abc.ABC):
 
     def _step_with_illegal_action(self, state: State, loser: Array) -> State:
         penalty = self._illegal_action_penalty
-        reward = jnp.ones_like(state.rewards) * (-1 * penalty) * (self.num_players - 1)
-        reward = reward.at[loser].set(penalty)
+        reward = jnp.full_like(state.rewards, penalty)
         return state.replace(rewards=reward, terminated=TRUE)  # type: ignore
 
 
