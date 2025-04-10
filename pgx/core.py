@@ -242,11 +242,20 @@ class Env(abc.ABC):
         )
 
         # Taking illegal action leads to immediate game terminal with negative reward
-        state = jax.lax.cond(
-            is_illegal,
-            lambda: self._step_with_illegal_action(state, current_player),
-            lambda: state,
-        )
+        # [original]
+        # state = jax.lax.cond(
+        #     is_illegal,
+        #     lambda: self._step_with_illegal_action(state, current_player),
+        #     lambda: state,
+        # )
+
+        # [optimization]
+        # note that we might take illegal action but win the game, also might possibly lose too?
+        # in either case, we mask out illegal actions, so we can let the value be anything
+        penalty = self._illegal_action_penalty
+        maybe_illegal_rewards = state.rewards + jnp.full_like(state.rewards, is_illegal * penalty)
+        maybe_terminated = state.terminated | is_illegal
+        state = state.replace(rewards=maybe_illegal_rewards, terminated=maybe_terminated)  # type: ignore
 
         # All legal_action_mask elements are **TRUE** at terminal state
         # This is to avoid zero-division error when normalizing action probability
