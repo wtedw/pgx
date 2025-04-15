@@ -20,7 +20,7 @@ class State(core.State):
     _step_count: Array = jnp.int32(0)
     # --- Hex specific ---
     _size: Array = None  # Will be set based on size
-    _turn: Array = jnp.int32(0)
+    _turn: Array = jnp.int32(1)
     _board: Array = None  # Will be set based on size
 
     @property
@@ -131,9 +131,9 @@ def _neighbour(xy, size):
 
 def _is_game_end(board, size, turn):
     top, bottom = jax.lax.cond(
-        turn == 0,
-        lambda: (board[:size], board[-size:]),
+        turn == 1,
         lambda: (board[::size], board[size - 1 :: size]),
+        lambda: (board[:size], board[-size:]),
     )
 
     def check_same_id_exist(_id):
