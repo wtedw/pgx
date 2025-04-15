@@ -132,8 +132,8 @@ def _neighbour(xy, size):
 def _is_game_end(board, size, turn):
     top, bottom = jax.lax.cond(
         turn == 1,
-        lambda: (board[::size], board[size - 1 :: size]),
         lambda: (board[:size], board[-size:]),
+        lambda: (board[::size], board[size - 1 :: size]),
     )
 
     def check_same_id_exist(_id):
