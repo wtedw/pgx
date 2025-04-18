@@ -114,7 +114,7 @@ def _observe(state: State, player_id: Array, size) -> Array:
     color = jax.lax.select(player_id == state.current_player, state._turn, 1 - state._turn)
     color = color * ones
 
-    return jnp.stack([my_board, opp_board, color], 2, dtype=jnp.bool_)
+    return jnp.stack([my_board, opp_board, color, ones], 2, dtype=jnp.bool_)
 
 def _neighbour(xy, size):
     """
