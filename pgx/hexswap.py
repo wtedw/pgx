@@ -51,7 +51,7 @@ class Hexswap(core.Env):
         size  = self.size
         board = jnp.zeros(size * size, jnp.int32)
 
-        # chan‑0  my stones, chan‑1  opp stones, chan‑2  colour, chan‑3  to‑play
+        # chan‑0  my stones, chan‑1  opp stones, chan‑2  colour, chan‑3  can‑swap
         obs_shape = (size, size, 4)
 
         # legal actions:  size² board positions  +1  “swap”
@@ -152,13 +152,12 @@ def _observe(state: State, player_id: Array, size: int) -> Array:
     )
     my_board  = board > 0
     opp_board = board < 0
-    colour    = jax.lax.select(player_id == state.current_player,
-                               state._turn, 1 - state._turn)
-    colour    = jnp.broadcast_to(colour, my_board.shape)
+    ones = jnp.ones_like(my_board)
+    color = jax.lax.select(player_id == state.current_player, state._turn, 1 - state._turn)
+    color = color * ones
+    can_swap = state.legal_action_mask[-1] * ones
 
-    to_play   = jnp.ones_like(my_board)         # always 1 (your own POV)
-
-    return jnp.stack([my_board, opp_board, colour, to_play], axis=2).astype(jnp.bool_)
+    return jnp.stack([my_board, opp_board, color, can_swap], axis=2).astype(jnp.bool_)
 
 
 # ---------- geometry / win‑check helpers (unchanged) -------------------------
