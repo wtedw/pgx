@@ -86,7 +86,7 @@ class Hexswap(core.Env):
 def _place(state: State, action: Array, size: int) -> State:
     """Regular stone placement."""
     set_place_id   = action + 1                              # IDs are 1‑based
-    one_hot_action = jax.nn.one_hot(action, state._board.size, state._board.dtype)
+    one_hot_action = jax.nn.one_hot(action, state._board.size, dtype=state._board.dtype)
     board          = state._board + one_hot_action * set_place_id
 
     # fast union–find merge (same as before)
