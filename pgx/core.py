@@ -84,6 +84,20 @@ EnvId = Literal[
     "hexnoswap_14x14",
     "hexnoswap_15x15",
     "hexnoswap",
+    "hexswap_3x3",
+    "hexswap_4x4",
+    "hexswap_5x5",
+    "hexswap_6x6",
+    "hexswap_7x7",
+    "hexswap_8x8",
+    "hexswap_9x9",
+    "hexswap_10x10",
+    "hexswap_11x11",
+    "hexswap_12x12",
+    "hexswap_13x13",
+    "hexswap_14x14",
+    "hexswap_15x15",
+    "hexswap",
     "kuhn_poker",
     "leduc_holdem",
     # "mahjong",
@@ -542,6 +556,48 @@ def make(env_id: EnvId):  # noqa: C901
     elif env_id == "hexnoswap":
         from pgx.hexnoswap import Hexnoswap
         return Hexnoswap(size=17)
+    elif env_id == "hexswap_3x3":
+        from pgx.hexswap import Hexswap
+        return Hexswap(size=3)
+    elif env_id == "hexswap_4x4":
+        from pgx.hexswap import Hexswap
+        return Hexswap(size=4)
+    elif env_id == "hexswap_5x5":
+        from pgx.hexswap import Hexswap
+        return Hexswap(size=5)
+    elif env_id == "hexswap_6x6":
+        from pgx.hexswap import Hexswap
+        return Hexswap(size=6)
+    elif env_id == "hexswap_7x7":
+        from pgx.hexswap import Hexswap
+        return Hexswap(size=7)
+    elif env_id == "hexswap_8x8":
+        from pgx.hexswap import Hexswap
+        return Hexswap(size=8)
+    elif env_id == "hexswap_9x9":
+        from pgx.hexswap import Hexswap
+        return Hexswap(size=9)
+    elif env_id == "hexswap_10x10":
+        from pgx.hexswap import Hexswap
+        return Hexswap(size=10)
+    elif env_id == "hexswap_11x11":
+        from pgx.hexswap import Hexswap
+        return Hexswap(size=11)
+    elif env_id == "hexswap_12x12":
+        from pgx.hexswap import Hexswap
+        return Hexswap(size=12)
+    elif env_id == "hexswap_13x13":
+        from pgx.hexswap import Hexswap
+        return Hexswap(size=13)
+    elif env_id == "hexswap_14x14":
+        from pgx.hexswap import Hexswap
+        return Hexswap(size=14)
+    elif env_id == "hexswap_15x15":
+        from pgx.hexswap import Hexswap
+        return Hexswap(size=15)
+    elif env_id == "hexswap":
+        from pgx.hexswap import Hexswap
+        return Hexswap(size=17)
     elif env_id == "kuhn_poker":
         from pgx.kuhn_poker import KuhnPoker
 
