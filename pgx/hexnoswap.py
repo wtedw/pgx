@@ -66,40 +66,53 @@ class Hexnoswap(core.Env):
     def num_players(self) -> int:
         return 2
 
-def _step(state: State, action: Array, size: int) -> State:
-    set_place_id = action + 1
-    one_hot_action = jax.nn.one_hot(action, state._board.size, dtype=state._board.dtype)
-    board = state._board + one_hot_action * set_place_id
-
-
-    neighbour = _neighbour(action, size)
-
-    def merge(i, b):
-        adj_pos = neighbour[i]
-        return jax.lax.cond(
-            (adj_pos >= 0) & (b[adj_pos] > 0),
-            lambda: jnp.where(b == b[adj_pos], set_place_id, b),
-            lambda: b,
+@partial(jax.jit, inline=True)
+def _fast_gather1d(v: jnp.ndarray, idx: jnp.ndarray) -> jnp.ndarray:
+    """Gather v[idx] via a small dot_general instead of a TPU-unfriendly gather."""
+    one_hot = jax.nn.one_hot(idx, v.shape[0], dtype=v.dtype)  # [6, N]
+    return jax.lax.dot_general(
+        one_hot, v,
+        dimension_numbers=(
+            ((1,), (0,)),  # contract one_hot’s axis-1 with v’s axis-0
+            ((), ())       # no batch dims
         )
+    )  # → [6]
 
-    board = jax.lax.fori_loop(0, 6, merge, board)
-    won = _is_game_end(board, size, state._turn)
+def _step(state: State, action: Array, size: int) -> State:
+    N            = state._board.size
+    set_place_id = action + 1
+
+    # 1) Place the new stone
+    board = state._board + jax.nn.one_hot(action, N, dtype=state._board.dtype) * set_place_id  # [N]
+
+    # 2) Fast-gather the 6 neighbour labels
+    neigh_idx = _neighbour(action, size)                                         # [6]
+    neigh_val = _fast_gather1d(board, jnp.maximum(neigh_idx, 0))                 # [6]
+    # zero-out off-board or opponent stones
+    neigh_val = jnp.where((neigh_idx >= 0) & (neigh_val > 0), neigh_val, 0)      # [6]
+
+    # 3) Build a [N,6] “match matrix” and reduce to [N] mask
+    pos       = neigh_val > 0                                                    # [6] static shape
+    matches   = (board[:, None] == neigh_val[None, :]) & pos[None, :]            # [N,6]
+    touched   = jnp.any(matches, axis=1)                                         # [N]
+
+    # 4) Merge in one shot
+    board     = jnp.where(touched, set_place_id, board)                          # [N]
+    won    = _is_game_end(board, size, state._turn)
     reward = jax.lax.cond(
         won,
         lambda: jnp.ones(2, jnp.float32),
         lambda: jnp.zeros(2, jnp.float32),
     )
 
-    state = state.replace(
-        current_player=1 - state.current_player,
-        _turn=1 - state._turn,
-        _board=board * -1,
-        rewards=reward,
-        terminated=won,
-        legal_action_mask=state.legal_action_mask.at[:].set(board == 0),
+    return state.replace(
+        current_player    = 1 - state.current_player,
+        _turn             = 1 - state._turn,
+        _board            = board * -1,
+        rewards           = reward,
+        terminated        = won,
+        legal_action_mask = state.legal_action_mask.at[:].set(board == 0),
     )
-
-    return state
 
 def _observe(state: State, player_id: Array, size) -> Array:
     board = jax.lax.select(

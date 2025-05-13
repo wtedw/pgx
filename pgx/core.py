@@ -244,7 +244,15 @@ class Env(abc.ABC):
         key: Optional[Array] = None,
     ) -> State:
         """Step function."""
-        is_illegal = ~state.legal_action_mask[action]
+        # 1) cast legal_action mask to int so we can dot-product it
+        mask_i32   = state.legal_action_mask.astype(jnp.int32)    # [A]
+        # 2) build a one-hot row selecting “action”
+        one_hot_a  = jax.nn.one_hot(action, mask_i32.shape[0], dtype=jnp.int32)  # [A]
+        # 3) dot-product to pick out mask[action]
+        #    → yields 1 if legal, 0 if illegal
+        is_legal_i = jnp.dot(one_hot_a, mask_i32)                # scalar 0 or 1
+        # 4) back to bool and invert
+        is_illegal = ~(is_legal_i.astype(bool))
         current_player = state.current_player
 
         # If the state is already terminated or truncated, environment does not take usual step,
