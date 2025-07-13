@@ -20,7 +20,8 @@ import numpy as np
 from jax import Array, lax
 
 EMPTY, PAWN, KNIGHT, BISHOP, ROOK, QUEEN, KING = tuple(range(7))  # opponent: -1 * piece
-MAX_TERMINATION_STEPS = 512  # from AlphaZero paper
+# MAX_TERMINATION_STEPS = 512  # from AlphaZero paper
+MAX_TERMINATION_STEPS = 256  # from AlphaZero paper
 
 # prepare precomputed values here (e.g., available moves, map to label, etc.)
 
@@ -129,6 +130,11 @@ FROM_PLANE, TO_PLANE, INIT_LEGAL_ACTION_MASK, LEGAL_DEST, LEGAL_DEST_NEAR, LEGAL
     jnp.array(x) for x in (FROM_PLANE, TO_PLANE, INIT_LEGAL_ACTION_MASK, LEGAL_DEST, LEGAL_DEST_NEAR, LEGAL_DEST_FAR, CAN_MOVE, BETWEEN)
 )
 
+FROM_PLANE_FLAT = FROM_PLANE.flatten() # Shape: (4672,)
+TO_PLANE_FLAT = TO_PLANE.flatten()              # shape (64*64 = 4096,)
+LEGAL_DEST_FLAT = LEGAL_DEST.reshape(-1, 27)             # (7*64, 27)
+BETWEEN_FLAT = BETWEEN.reshape(64 * 64, 6)
+
 keys = jax.random.split(jax.random.PRNGKey(12345), 4)
 ZOBRIST_BOARD = jax.random.randint(keys[0], shape=(64, 13, 2), minval=0, maxval=2**31 - 1, dtype=jnp.uint32)
 ZOBRIST_SIDE = jax.random.randint(keys[1], shape=(2,), minval=0, maxval=2**31 - 1, dtype=jnp.uint32)
@@ -159,10 +165,18 @@ class Action(NamedTuple):
     def _from_label(label: Array):
         from_, plane = label // 73, label % 73
         underpromotion = lax.select(plane >= 9, -1, plane // 3)
-        return Action(from_=from_, to=FROM_PLANE[from_, plane], underpromotion=underpromotion)
+        one_hot = jax.nn.one_hot(label, 4672, dtype=FROM_PLANE_FLAT.dtype)
+        to = one_hot @ FROM_PLANE_FLAT           # (<batch>,) result
+
+        return Action(from_=from_, to=to, underpromotion=underpromotion)
 
     def _to_label(self):
-        return self.from_ * 73 + TO_PLANE[self.from_, self.to]
+        flat_idx = self.from_ * 64 + self.to            # 0 … 4095
+        plane    = (jax.nn.one_hot(flat_idx, 4096,      # one-hot × table
+                                   dtype=TO_PLANE_FLAT.dtype)
+                    @ TO_PLANE_FLAT)                    # same shape as flat_idx
+
+        return self.from_ * 73 + plane
 
 
 class Game:
@@ -178,12 +192,18 @@ class Game:
         return state
 
     def observe(self, state: GameState, color: Optional[Array] = None) -> Array:
+        """
+        This function is modified to remove gathers.
+        The inner `make` function is vmapped over board and hash history slices
+        directly, avoiding explicit indexing like `state.board_history[i]`.
+        """
         if color is None:
             color = state.color
         ones = jnp.ones((1, 8, 8), dtype=jnp.float32)
 
-        def make(i):
-            board = jnp.rot90(state.board_history[i].reshape((8, 8)), k=1)
+        def make(board_history_slice, hash_history_slice):
+            # board_history_slice is (64,), hash_history_slice is (2,)
+            board = jnp.rot90(board_history_slice.reshape((8, 8)), k=1)
 
             def piece_feat(p):
                 return (board == p).astype(jnp.float32)
@@ -191,20 +211,24 @@ class Game:
             my_pieces = jax.vmap(piece_feat)(jnp.arange(1, 7))
             opp_pieces = jax.vmap(piece_feat)(-jnp.arange(1, 7))
 
-            h = state.hash_history[i, :]
+            h = hash_history_slice
+            # Compare current h against the entire history to find repetitions
             rep = (state.hash_history == h).all(axis=1).sum() - 1
             rep = lax.select((h == 0).all(), 0, rep)
             rep0 = ones * (rep == 0)
             rep1 = ones * (rep >= 1)
             return jnp.vstack([my_pieces, opp_pieces, rep0, rep1])
 
+        # Vmap over the first 8 history states and their corresponding hashes
+        board_features = jax.vmap(make)(state.board_history, state.hash_history[:8]).reshape(-1, 8, 8)
+
         return jnp.vstack(
             [
-                jax.vmap(make)(jnp.arange(8)).reshape(-1, 8, 8),  # board feature
-                color * ones,  # color
-                (state.step_count / MAX_TERMINATION_STEPS) * ones,  # total move count
-                state.castling_rights.flatten()[:, None, None] * ones,  # (my queen, my king, opp queen, opp king)
-                (state.halfmove_count.astype(jnp.float32) / 100.0) * ones,  # no progress count
+                board_features,
+                color * ones,
+                (state.step_count / MAX_TERMINATION_STEPS) * ones,
+                state.castling_rights.flatten()[:, None, None] * ones,
+                (state.halfmove_count.astype(jnp.float32) / 100.0) * ones,
             ]
         ).transpose((1, 2, 0))
 
@@ -244,7 +268,8 @@ def has_insufficient_pieces(state: GameState):
     num_bishop = (jnp.abs(state.board) == BISHOP).sum()
     coords = jnp.arange(64).reshape((8, 8))
     black_coords = jnp.hstack((coords[::2, ::2].ravel(), coords[1::2, 1::2].ravel()))
-    num_bishop_on_black = (jnp.abs(state.board[black_coords]) == BISHOP).sum()
+    pieces_on_black = _pieces_at(state.board, black_coords)
+    num_bishop_on_black = (jnp.abs(pieces_on_black) == BISHOP).sum()
     is_insufficient = False
     # king vs king
     is_insufficient |= num_pieces <= 2
@@ -259,17 +284,23 @@ def has_insufficient_pieces(state: GameState):
 
 
 def _apply_move(state: GameState, a: Action) -> GameState:
-    piece = state.board[a.from_]
+    piece = _pieces_at(state.board, a.from_)
     # en passant
     is_en_passant = (state.en_passant >= 0) & (piece == PAWN) & (state.en_passant == a.to)
     removed_pawn_pos = a.to - 1
     state = state._replace(
-        board=state.board.at[removed_pawn_pos].set(lax.select(is_en_passant, EMPTY, state.board[removed_pawn_pos]))
+        # Select between the new updated board and the original board
+        # to avoid gather operation `state.board[removed_pawn_pos]`
+        board=lax.select(
+            is_en_passant,
+            _set_pieces(state.board, jnp.array([removed_pawn_pos],  jnp.int32), jnp.array([EMPTY], jnp.int32)),
+            state.board
+        )
     )
     is_en_passant = (piece == PAWN) & (jnp.abs(a.to - a.from_) == 2)
     state = state._replace(en_passant=lax.select(is_en_passant, (a.to + a.from_) // 2, -1))
     # update counters
-    captured = (state.board[a.to] < 0) | is_en_passant
+    captured = (_pieces_at(state.board, a.to) < 0) | is_en_passant
     state = state._replace(
         halfmove_count=lax.select(captured | (piece == PAWN), 0, state.halfmove_count + 1),
         fullmove_count=state.fullmove_count + jnp.int32(state.color == 1),
@@ -277,9 +308,13 @@ def _apply_move(state: GameState, a: Action) -> GameState:
     # castling
     board = state.board
     is_queen_side_castling = (piece == KING) & (a.from_ == 32) & (a.to == 16)
-    board = lax.select(is_queen_side_castling, board.at[0].set(EMPTY).at[24].set(ROOK), board)
+    board_q         = _set_pieces(_set_pieces(board, 0, EMPTY), 24, ROOK)
+    board           = lax.select(is_queen_side_castling, board_q, board)
+
     is_king_side_castling = (piece == KING) & (a.from_ == 32) & (a.to == 48)
-    board = lax.select(is_king_side_castling, board.at[56].set(EMPTY).at[40].set(ROOK), board)
+    board_k         = _set_pieces(_set_pieces(board, 56, EMPTY), 40, ROOK)
+    board           = lax.select(is_king_side_castling, board_k, board)
+
     state = state._replace(board=board)
     # update castling rights
     cond = jnp.bool_([[(a.from_ != 32) & (a.from_ != 0), (a.from_ != 32) & (a.from_ != 56)], [a.to != 7, a.to != 63]])
@@ -287,9 +322,24 @@ def _apply_move(state: GameState, a: Action) -> GameState:
     # promotion to queen
     piece = lax.select((piece == PAWN) & (a.from_ % 8 == 6) & (a.underpromotion < 0), QUEEN, piece)
     # underpromotion
-    piece = lax.select(a.underpromotion < 0, piece, jnp.int32([ROOK, BISHOP, KNIGHT])[a.underpromotion])
+    is_underpromotion = a.underpromotion >= 0
+
+    # Start with a default value (can be anything, it will be overwritten)
+    promoted_piece = piece
+
+    # Unroll the selection logic using a series of conditional checks
+    promoted_piece = jnp.where(a.underpromotion == 0, ROOK,   promoted_piece)
+    promoted_piece = jnp.where(a.underpromotion == 1, BISHOP, promoted_piece)
+    promoted_piece = jnp.where(a.underpromotion == 2, KNIGHT, promoted_piece)
+
+    # Only apply the update if it was an underpromotion, otherwise keep the original piece value
+    piece = jnp.where(is_underpromotion, promoted_piece, piece)
+
     # actually move
-    state = state._replace(board=state.board.at[a.from_].set(EMPTY).at[a.to].set(piece))  # type: ignore
+    board = _set_pieces(board, a.from_, EMPTY)
+    board = _set_pieces(board, a.to,    piece)
+    state = state._replace(board=board)
+
     return state
 
 
@@ -307,26 +357,43 @@ def _flip(state: GameState) -> GameState:
     )
 
 
+# ---------------------------------------------------------------------
+# helper: gather-free LEGAL_DEST[piece, from_]  ➜  (27,) int32
+# ---------------------------------------------------------------------
+
+def _legal_dest(piece: Array, frm: Array) -> Array:
+    flat = piece * 64 + frm                              # 0 … 447
+    oh   = jax.nn.one_hot(flat, 7 * 64, dtype=jnp.int32) # (448,)
+    return oh @ LEGAL_DEST_FLAT                          # (27,)
+
 def _legal_action_mask(state: GameState) -> Array:
     def legal_normal_moves(from_):
-        piece = state.board[from_]
+        piece = _pieces_at(state.board, from_)
 
         def legal_label(to):
-            ok = (from_ >= 0) & (piece > 0) & (to >= 0) & (state.board[to] <= 0)
-            between_ixs = BETWEEN[from_, to]
-            ok &= CAN_MOVE[piece, from_, to] & ((between_ixs < 0) | (state.board[between_ixs] == EMPTY)).all()
+            ok = (from_ >= 0) & (piece > 0) & (to >= 0) & (_pieces_at(state.board, to) <= 0)
+            between_indices = from_ * 64 + to
+            between_ixs = (
+                jax.nn.one_hot(between_indices, 4096, dtype=jnp.int32) @ BETWEEN_FLAT
+            )
+
+            # Since the CAN_MOVE array is large, the one hot + matmul trick is not as performant.
+            # We instead compute the `can_move` boolean on the fly
+            can_move_bool = _can_move_on_the_fly(piece, from_, to)
+            ok &= can_move_bool & ((between_ixs < 0) | (_pieces_at(state.board, between_ixs) == EMPTY)).all()
             c0, c1 = from_ // 8, to // 8
-            pawn_should = ((c1 == c0) & (state.board[to] == EMPTY)) | ((c1 != c0) & (state.board[to] < 0))
+            pawn_should = ((c1 == c0) & (_pieces_at(state.board, to) == EMPTY)) | ((c1 != c0) & (_pieces_at(state.board, to) < 0))
             ok &= (piece != PAWN) | pawn_should
+
             return lax.select(ok, Action(from_=from_, to=to)._to_label(), -1)
 
-        return jax.vmap(legal_label)(LEGAL_DEST[piece, from_])
+        return jax.vmap(legal_label)(_legal_dest(piece, from_))
 
     def legal_en_passants():
         to = state.en_passant
 
         def legal_labels(from_):
-            ok = (from_ >= 0) & (from_ < 64) & (to >= 0) & (state.board[from_] == PAWN) & (state.board[to - 1] == -PAWN)
+            ok = (from_ >= 0) & (from_ < 64) & (to >= 0) & (_pieces_at(state.board, from_) == PAWN) & (_pieces_at(state.board, to - 1) == -PAWN)
             a = Action(from_=from_, to=to)
             return lax.select(ok, a._to_label(), -1)
 
@@ -339,7 +406,7 @@ def _legal_action_mask(state: GameState) -> Array:
     def legal_underpromotions(mask):
         def legal_labels(label):
             a = Action._from_label(label)
-            ok = (state.board[a.from_] == PAWN) & (a.to >= 0)
+            ok = (_pieces_at(state.board, a.from_) == PAWN) & (a.to >= 0)
             ok &= mask[Action(from_=a.from_, to=a.to)._to_label()]
             return lax.select(ok, label, -1)
 
@@ -347,55 +414,210 @@ def _legal_action_mask(state: GameState) -> Array:
         return jax.vmap(legal_labels)(labels)
 
     # normal move and en passant
-    possible_piece_positions = jnp.nonzero(state.board > 0, size=16, fill_value=-1)[0]
+
+    # The original jnp.nonzero(..., size=...) is slow. This pattern replaces it.
+    # 1. Create a boolean mask of our pieces.
+    is_my_piece = state.board > 0
+
+    # 2. Create an array where valid positions have their index, others have -1.
+    indices_or_sentinel = jnp.where(is_my_piece, jnp.arange(64), -1)
+
+    # 3. Use top_k to sort the valid indices to the front.
+    # Surprisingly, this is much faster.
+    possible_piece_positions, _ = lax.top_k(indices_or_sentinel, k=16)
+
     a1 = jax.vmap(legal_normal_moves)(possible_piece_positions).flatten()
     a2 = legal_en_passants()
     actions = jnp.hstack((a1, a2))  # include -1
     # filter out -1. 200 is big enough for normal play.
-    ixs = jnp.nonzero(actions >= 0, size=200, fill_value=0)[0]
-    actions = actions[ixs]  # size: 19 * 27 -> 200
-    # filter ignoring checks and suicides
-    actions = jnp.where(jax.vmap(is_not_checked)(actions), actions, -1)
-    mask = jnp.zeros(64 * 73 + 1, dtype=jnp.bool_)  # +1 for sentinel
-    mask = mask.at[actions].set(True)
 
-    # castling
+    # The original code used jnp.nonzero to filter out -1s, which is slow.
+    # We replace it with lax.top_k, which is a single, fast sort operation.
+    # It efficiently collects all valid moves (>=0) at the front of a fixed-size array.
+    actions, _ = lax.top_k(actions, k=200)
+
+
+    # Filter actions by checking for suicides (moves that leave the king in check).
+    # The result is a dense array of valid action labels, padded with -1.
+    valid_actions = jnp.where(jax.vmap(is_not_checked)(actions), actions, -1)
+
+    # 1. Create the base update mask from standard legal moves.
+    # This converts the array of action labels into a single boolean mask.
+    base_update_mask = jax.nn.one_hot(
+        valid_actions, 64 * 73 + 1, dtype=jnp.bool_
+    ).any(axis=0)
+
+    # 2. Create the update mask for legal underpromotions.
+    # The legal_underpromotions function needs a mask to check against.
+    underpromo_actions = legal_underpromotions(base_update_mask)
+    underpromo_mask = jax.nn.one_hot(
+        underpromo_actions, 64 * 73 + 1, dtype=jnp.bool_
+    ).any(axis=0)
+
+
+    # 3. Create update masks for the two castling moves (without scattering).
+    # Condition 1 & 2 We check if castling is legal and if the relevant squares are not attacked.
     b = state.board
     can_castle_queen_side = state.castling_rights[0, 0]
-    can_castle_queen_side &= (b[0] == ROOK) & (b[8] == EMPTY) & (b[16] == EMPTY) & (b[24] == EMPTY) & (b[32] == KING)
-    can_castle_king_side = state.castling_rights[0, 1]
-    can_castle_king_side &= (b[32] == KING) & (b[40] == EMPTY) & (b[48] == EMPTY) & (b[56] == ROOK)
-    not_checked = ~jax.vmap(_is_attacked, in_axes=(None, 0))(state, jnp.int32([16, 24, 32, 40, 48]))
-    mask = mask.at[2364].set(mask[2364] | (can_castle_queen_side & not_checked[:3].all()))
-    mask = mask.at[2367].set(mask[2367] | (can_castle_king_side & not_checked[2:].all()))
+    q_indices = jnp.int32([0, 8, 16, 24, 32])
+    q_pieces = _pieces_at(b, q_indices)
+    q_expected = jnp.int32([ROOK, EMPTY, EMPTY, EMPTY, KING])
+    can_castle_queen_side &= (q_pieces == q_expected).all()
 
-    # set underpromotions
-    actions = legal_underpromotions(mask)
-    mask = mask.at[actions].set(True)
+    can_castle_king_side = state.castling_rights[0, 1]
+    k_indices = jnp.int32([32, 40, 48, 56])
+    k_pieces = _pieces_at(b, k_indices)
+    k_expected = jnp.int32([KING, EMPTY, EMPTY, ROOK])
+    can_castle_king_side &= (k_pieces == k_expected).all()
+
+    ### Create a boolean mask for each castling move directly.
+    # Condition 3: Check if king passes through or into check
+    not_checked = ~jax.vmap(_is_attacked, in_axes=(None, 0))(state, jnp.int32([16, 24, 32, 40, 48]))
+
+    # Combine all three conditions for the final decision
+    final_can_castle_q = can_castle_queen_side & not_checked[:3].all()
+    final_can_castle_k = can_castle_king_side & not_checked[2:].all()
+
+    # Create a boolean mask for each castling move using the final, correct condition.
+    arange = jnp.arange(64 * 73 + 1)
+    castle_q_mask = (arange == 2364) & final_can_castle_q
+    castle_k_mask = (arange == 2367) & final_can_castle_k
+
+    # 4. Combine all masks using a final, element-wise logical OR.
+    # This single operation replaces all the previous scatter updates.
+    mask = base_update_mask | underpromo_mask | castle_q_mask | castle_k_mask
 
     return mask[:-1]
 
+# ==============================================================================
+# PRE-COMPUTED TABLES FOR OPTIMIZED `_is_attacked`
+# ==============================================================================
+# For a given square, lists all squares from which an opponent's piece can attack.
+# These tables are indexed by the *attacked* square.
+KNIGHT_ATTACKS = -np.ones((64, 8), np.int32)
+KING_ATTACKS = -np.ones((64, 8), np.int32)
+PAWN_ATTACKS = -np.ones((64, 2), np.int32)
+
+# For a given square, lists all squares in each of the 8 sliding directions.
+RAYS = -np.ones((64, 8, 7), np.int32)
+# Directions: E, NE, N, NW, W, SW, S, SE
+# N: +1, E: +8, S: -1, W: -8
+RAY_DELTAS = np.array([8, 9, 1, -7, -8, -9, -1, 7])
+
+# Maps piece type to the rays it can move along.
+# The order matches RAY_DELTAS: E, NE, N, NW, W, SW, S, SE
+PIECE_RAY_MAP = np.zeros((7, 8), dtype=bool)
+PIECE_RAY_MAP[BISHOP, [1, 3, 5, 7]] = True  # Diagonal directions
+PIECE_RAY_MAP[ROOK, [0, 2, 4, 6]] = True    # Cardinal directions
+PIECE_RAY_MAP[QUEEN, :] = True
+
+for sq in range(64):
+    # This coordinate system must be consistent: rank is the row, file is the column.
+    # In pgx chess, from_ % 8 is rank-like and from_ // 8 is file-like.
+    rank, file = sq % 8, sq // 8
+
+    # --- Knight attacks ---
+    knight_moves = []
+    for dr, df in [(1, 2), (1, -2), (-1, 2), (-1, -2), (2, 1), (2, -1), (-2, 1), (-2, -1)]:
+        nr, nf = rank + dr, file + df
+        if 0 <= nr < 8 and 0 <= nf < 8:
+            knight_moves.append(nf * 8 + nr)
+    KNIGHT_ATTACKS[sq, :len(knight_moves)] = knight_moves
+
+    # --- King attacks ---
+    king_moves = []
+    for dr in [-1, 0, 1]:
+        for df in [-1, 0, 1]:
+            if dr == 0 and df == 0: continue
+            nr, nf = rank + dr, file + df
+            if 0 <= nf < 8 and 0 <= nr < 8:
+                king_moves.append(nf * 8 + nr)
+    KING_ATTACKS[sq, :len(king_moves)] = king_moves
+
+    # --- Pawn attacks ---
+    # To attack square (rank, file), an opponent pawn must be on the next rank up (rank + 1)
+    # and an adjacent file (file +/- 1).
+    pawn_attackers = []
+    if rank < 7:  # Can't be attacked from above rank 7
+        if file > 0:  # Attacker from the left-file
+            pawn_attackers.append((file - 1) * 8 + (rank + 1))
+        if file < 7:  # Attacker from the right-file
+            pawn_attackers.append((file + 1) * 8 + (rank + 1))
+    PAWN_ATTACKS[sq, :len(pawn_attackers)] = pawn_attackers
+
+    # --- Ray casting ---
+    for i, delta in enumerate(RAY_DELTAS):
+        ray = []
+        for k in range(1, 8):
+            curr_sq = sq + k * delta
+            if not (0 <= curr_sq < 64): break
+
+            # Robust wrap-around check
+            curr_rank, curr_file = curr_sq % 8, curr_sq // 8
+            dist = max(abs(curr_rank - rank), abs(curr_file - file))
+            if dist != k: break # The move wrapped around the board edge
+            ray.append(curr_sq)
+        RAYS[sq, i, :len(ray)] = ray
+
+# Convert all new tables to JAX arrays
+KNIGHT_ATTACKS, KING_ATTACKS, PAWN_ATTACKS, RAYS, PIECE_RAY_MAP = (
+    jnp.array(x) for x in (KNIGHT_ATTACKS, KING_ATTACKS, PAWN_ATTACKS, RAYS, PIECE_RAY_MAP)
+)
 
 def _is_attacked(state: GameState, pos: Array):
-    def attacked_far(to):
-        ok = (to >= 0) & (state.board[to] < 0)  # should be opponent's
-        piece = jnp.abs(state.board[to])
-        ok &= (piece == QUEEN) | (piece == ROOK) | (piece == BISHOP)
-        between_ixs = BETWEEN[pos, to]
-        ok &= CAN_MOVE[piece, pos, to] & ((between_ixs < 0) | (state.board[between_ixs] == EMPTY)).all()
-        return ok
+    """
+    A fully vectorized, gather-free check for whether a square is attacked.
+    This version uses ray-casting for sliding pieces and direct lookups for others,
+    avoiding expensive vmap operations.
+    """
+    board = state.board
 
-    def attacked_near(to):
-        ok = (to >= 0) & (state.board[to] < 0)  # should be opponent's
-        piece = jnp.abs(state.board[to])
-        ok &= CAN_MOVE[piece, pos, to]
-        ok &= ~((piece == PAWN) & (to // 8 == pos // 8))  # should move diagonally to capture
-        return ok
+    # Create a one-hot vector to serve as a selector for the given position `pos`.
+    one_hot_pos = jax.nn.one_hot(pos, 64, dtype=jnp.int32)
 
-    by_minor = jax.vmap(attacked_near)(LEGAL_DEST_NEAR[pos, :]).any()
-    by_major = jax.vmap(attacked_far)(LEGAL_DEST_FAR[pos, :]).any()
-    return by_minor | by_major
+    # --- 1. Direct attacks (Knight, Pawn, King) ---
+    knight_attack_squares = one_hot_pos @ KNIGHT_ATTACKS
+    knights = _pieces_at(board, knight_attack_squares)
+    is_attacked_by_knight = (knights == -KNIGHT).any()
 
+    pawn_attack_squares = one_hot_pos @ PAWN_ATTACKS
+    pawns = _pieces_at(board, pawn_attack_squares)
+    is_attacked_by_pawn = (pawns == -PAWN).any()
+
+    king_attack_squares = one_hot_pos @ KING_ATTACKS
+    kings = _pieces_at(board, king_attack_squares)
+    is_attacked_by_king = (kings == -KING).any()
+
+    by_near = is_attacked_by_knight | is_attacked_by_pawn | is_attacked_by_king
+
+    # --- 2. Sliding attacks (Rook, Bishop, Queen) ---
+
+    # Use tensordot to select the (8, 7) slice from the RAYS table.
+    ray_squares = jnp.tensordot(one_hot_pos, RAYS, axes=([0], [0]))
+    pieces_on_rays = _pieces_at(board, ray_squares)  # Shape: (8, 7)
+
+    # Find the first piece encountered in each of the 8 directions.
+    is_blocker = pieces_on_rays != EMPTY
+    # `argmax` gives the distance (0-6) to the first blocker in each ray.
+    dist_to_first_blocker = jnp.argmax(is_blocker, axis=1)
+    ray_has_blocker = is_blocker.any(axis=1)
+
+    # Use one-hot multiplication to select the piece at the blocker's position.
+    one_hot_dist = jax.nn.one_hot(dist_to_first_blocker, 7, dtype=board.dtype)
+    first_blocker_piece = (pieces_on_rays * one_hot_dist).sum(axis=1)
+    # Ignore the result if the ray was actually empty.
+    first_blocker_piece = jnp.where(ray_has_blocker, first_blocker_piece, EMPTY)
+
+    # Check if the blocking piece is an opponent's sliding piece that can attack along that ray.
+    is_opponent_blocker = first_blocker_piece < 0
+
+    # Check if the piece type can move along the given ray direction.
+    one_hot_piece_type = jax.nn.one_hot(jnp.abs(first_blocker_piece), 7, dtype=jnp.bool_)
+    can_piece_attack_on_ray = (one_hot_piece_type * PIECE_RAY_MAP.T).sum(axis=1)
+
+    by_slider = (is_opponent_blocker & can_piece_attack_on_ray).any()
+
+    return by_near | by_slider
 
 def _is_checked(state: GameState):
     king_pos = jnp.argmin(jnp.abs(state.board - KING))
@@ -404,9 +626,82 @@ def _is_checked(state: GameState):
 
 def _zobrist_hash(state: GameState) -> Array:
     hash_ = lax.select(state.color == 0, ZOBRIST_SIDE, jnp.zeros_like(ZOBRIST_SIDE))
-    to_reduce = ZOBRIST_BOARD[jnp.arange(64), state.board + 6]  # 0, ..., 12 (w:pawn, ..., b:king)
+    one_hot_board = jax.nn.one_hot(state.board + 6, 13, dtype=jnp.uint32)
+    to_reduce = jnp.einsum('sp,sph->sh', one_hot_board, ZOBRIST_BOARD, preferred_element_type=jnp.uint32)
     hash_ ^= lax.reduce(to_reduce, 0, lax.bitwise_xor, (0,))
     to_reduce = jnp.where(state.castling_rights.reshape(-1, 1), ZOBRIST_CASTLING, 0)
     hash_ ^= lax.reduce(to_reduce, 0, lax.bitwise_xor, (0,))
-    hash_ ^= ZOBRIST_EN_PASSANT[state.en_passant]
+
+    # Optimized version:
+    # 1. Create a one-hot vector from the en passant index.
+    #    The modulo handles the -1 case, mapping it to the last element (index 64).
+    safe_idx = state.en_passant % 65
+    one_hot_en_passant = jax.nn.one_hot(safe_idx, 65, dtype=jnp.uint32)
+
+    # 2. Use matrix multiplication to select the correct hash value.
+    en_passant_hash = one_hot_en_passant @ ZOBRIST_EN_PASSANT
+    hash_ ^= en_passant_hash
+
     return hash_
+
+
+def _pieces_at(board: Array, idx: Array) -> Array:
+    """Return board[idx] without gathers; `idx` may contain –1.
+
+    –1  →  EMPTY (0)                # matches original PGX semantics
+    """
+    idx   = jnp.asarray(idx, jnp.int32)
+
+    valid = idx >= 0                       # mask of real squares
+    safe  = jnp.where(valid, idx, 0)       # –1 → 0 just to build one-hot
+
+    # one-hot dot board  ➜  gather-equivalent
+    pieces = jax.nn.one_hot(safe, 64, dtype=board.dtype) @ board
+
+    # force EMPTY on sentinels
+
+    return jnp.where(valid, pieces, jnp.int32(EMPTY))
+
+
+def _one_hot64(idx: Array, dtype=jnp.int32) -> Array:
+    """Length-64 one-hot vector (handles scalar or vector idx)."""
+    return jax.nn.one_hot(idx, 64, dtype=dtype)          # (..., 64)
+
+
+def _set_pieces(board: Array, idx: Array, val: Array) -> Array:
+    """Update board[idx] ← val (handles scalar or 1-D idx)."""
+    idx = jnp.atleast_1d(idx).astype(jnp.int32)         # (k,)
+    val = jnp.atleast_1d(val).astype(board.dtype)       # (k,)
+    mask = _one_hot64(idx, dtype=board.dtype)           # (k, 64)
+    # board * (1-mask)  +  (mask.T @ val)   (64,)
+    return board * (1 - mask.max(axis=0)) + (mask.T @ val)
+
+def _can_move_on_the_fly(piece, from_, to):
+    """
+    Calculates move geometry on the fly.
+    """
+    r0, c0 = from_ % 8, from_ // 8
+    r1, c1 = to % 8, to // 8
+    dr, dc = r1 - r0, c1 - c0
+
+    pawn_one_step = (dr == 1) & (jnp.abs(dc) <= 1)
+    # The special two-step move is only from the second rank (index 1)
+    pawn_two_step = (r0 == 1) & (dr == 2) & (dc == 0)
+    is_pawn_move = pawn_one_step | pawn_two_step
+
+    is_knight_move = (jnp.abs(dr) * jnp.abs(dc) == 2)
+    is_bishop_move = (jnp.abs(dr) == jnp.abs(dc))
+    is_rook_move = (dr == 0) | (dc == 0)
+    is_queen_move = is_bishop_move | is_rook_move
+    is_king_move = (jnp.abs(dr) <= 1) & (jnp.abs(dc) <= 1)
+
+    # --- Select the correct check based on the piece type ---
+    can_move = jnp.zeros_like(dr, dtype=jnp.bool_) # Default False
+    can_move = jnp.where(piece == PAWN, is_pawn_move, can_move)
+    can_move = jnp.where(piece == KNIGHT, is_knight_move, can_move)
+    can_move = jnp.where(piece == BISHOP, is_bishop_move, can_move)
+    can_move = jnp.where(piece == ROOK, is_rook_move, can_move)
+    can_move = jnp.where(piece == QUEEN, is_queen_move, can_move)
+    can_move = jnp.where(piece == KING, is_king_move, can_move)
+
+    return can_move

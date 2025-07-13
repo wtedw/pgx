@@ -66,7 +66,8 @@ class Chess(core.Env):
 
     def _init(self, key: PRNGKey) -> State:
         x = GameState()
-        _player_order = jnp.array([[0, 1], [1, 0]])[jax.random.bernoulli(key).astype(jnp.int32)]
+        # Always keep the same player order so that column 0 is Player 1
+        _player_order = jnp.int32([0, 1])
         state = State(  # type: ignore
             current_player=_player_order[x.color],
             _player_order=_player_order,
