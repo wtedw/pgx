@@ -133,7 +133,6 @@ FROM_PLANE, TO_PLANE, INIT_LEGAL_ACTION_MASK, LEGAL_DEST, LEGAL_DEST_NEAR, LEGAL
 FROM_PLANE_FLAT = FROM_PLANE.flatten() # Shape: (4672,)
 TO_PLANE_FLAT = TO_PLANE.flatten()              # shape (64*64 = 4096,)
 LEGAL_DEST_FLAT = LEGAL_DEST.reshape(-1, 27)             # (7*64, 27)
-BETWEEN_FLAT = BETWEEN.reshape(64 * 64, 6)
 
 keys = jax.random.split(jax.random.PRNGKey(12345), 4)
 ZOBRIST_BOARD = jax.random.randint(keys[0], shape=(64, 13, 2), minval=0, maxval=2**31 - 1, dtype=jnp.uint32)
@@ -372,15 +371,15 @@ def _legal_action_mask(state: GameState) -> Array:
 
         def legal_label(to):
             ok = (from_ >= 0) & (piece > 0) & (to >= 0) & (_pieces_at(state.board, to) <= 0)
-            between_indices = from_ * 64 + to
-            between_ixs = (
-                jax.nn.one_hot(between_indices, 4096, dtype=jnp.int32) @ BETWEEN_FLAT
-            )
+
+            # Replace the slow BETWEEN gather with the on-the-fly calculation
+            path_is_clear = _is_path_clear(state.board, from_, to)
 
             # Since the CAN_MOVE array is large, the one hot + matmul trick is not as performant.
             # We instead compute the `can_move` boolean on the fly
             can_move_bool = _can_move_on_the_fly(piece, from_, to)
-            ok &= can_move_bool & ((between_ixs < 0) | (_pieces_at(state.board, between_ixs) == EMPTY)).all()
+            ok &= can_move_bool & path_is_clear
+
             c0, c1 = from_ // 8, to // 8
             pawn_should = ((c1 == c0) & (_pieces_at(state.board, to) == EMPTY)) | ((c1 != c0) & (_pieces_at(state.board, to) < 0))
             ok &= (piece != PAWN) | pawn_should
@@ -675,6 +674,35 @@ def _set_pieces(board: Array, idx: Array, val: Array) -> Array:
     mask = _one_hot64(idx, dtype=board.dtype)           # (k, 64)
     # board * (1-mask)  +  (mask.T @ val)   (64,)
     return board * (1 - mask.max(axis=0)) + (mask.T @ val)
+
+
+def _is_path_clear(board: Array, from_: Array, to_: Array) -> Array:
+    """
+    Checks if the path is clear between from_ and to_ for sliding pieces.
+    Returns True for non-sliding moves.
+    """
+    r0, c0 = from_ % 8, from_ // 8
+    r1, c1 = to_   % 8, to_   // 8
+    dr, dc = r1 - r0, c1 - c0
+
+    is_sliding_path = (dr == 0) | (dc == 0) | (jnp.abs(dr) == jnp.abs(dc))
+
+    step_dr, step_dc = jnp.sign(dr), jnp.sign(dc)
+    delta      = step_dc * 8 + step_dr
+    path_len   = jnp.maximum(jnp.abs(dr), jnp.abs(dc))
+
+    step_multipliers     = jnp.arange(1, 7)
+    intermediate_squares = from_ + step_multipliers * delta
+
+    # Mask to ensure only valid squares (or -1) are passed to the next function
+    valid_steps_mask     = step_multipliers < path_len
+    safe_sq              = jnp.where(valid_steps_mask, intermediate_squares, -1)
+
+    # Check pieces on the safe, valid squares
+    board_pieces         = _pieces_at(board, safe_sq)
+    are_between_empty    = (board_pieces == EMPTY).all()
+
+    return ~is_sliding_path | are_between_empty
 
 def _can_move_on_the_fly(piece, from_, to):
     """
