@@ -497,11 +497,27 @@ KNIGHT_ATTACKS = -np.ones((64, 8), np.int32)
 KING_ATTACKS = -np.ones((64, 8), np.int32)
 PAWN_ATTACKS = -np.ones((64, 2), np.int32)
 
+
 # For a given square, lists all squares in each of the 8 sliding directions.
+
 RAYS = -np.ones((64, 8, 7), np.int32)
-# Directions: E, NE, N, NW, W, SW, S, SE
-# N: +1, E: +8, S: -1, W: -8
-RAY_DELTAS = np.array([8, 9, 1, -7, -8, -9, -1, 7])
+# Change in (rank, file) for each direction
+# The order matches RAY_DELTAS: E, NE, N, NW, W, SW, S, SE
+# Note: In this system, rank is % 8 and file is // 8
+# E: file+1, rank=0 -> df=1, dr=0
+# NE: file+1, rank+1 -> df=1, dr=1
+# N: file=0, rank+1 -> df=0, dr=1
+DIR_DELTAS = np.array([
+    [0, 1],   # E
+    [1, 1],   # NE
+    [1, 0],   # N
+    [1, -1],  # NW
+    [0, -1],  # W
+    [-1, -1], # SW
+    [-1, 0],  # S
+    [-1, 1],  # SE
+], dtype=np.int32)
+
 
 # Maps piece type to the rays it can move along.
 # The order matches RAY_DELTAS: E, NE, N, NW, W, SW, S, SE
@@ -545,17 +561,19 @@ for sq in range(64):
     PAWN_ATTACKS[sq, :len(pawn_attackers)] = pawn_attackers
 
     # --- Ray casting ---
-    for i, delta in enumerate(RAY_DELTAS):
+    for i, (dr, df) in enumerate(DIR_DELTAS):
         ray = []
         for k in range(1, 8):
-            curr_sq = sq + k * delta
-            if not (0 <= curr_sq < 64): break
+            # Calculate the new rank and file directly
+            nr, nf = rank + k * dr, file + k * df
 
-            # Robust wrap-around check
-            curr_rank, curr_file = curr_sq % 8, curr_sq // 8
-            dist = max(abs(curr_rank - rank), abs(curr_file - file))
-            if dist != k: break # The move wrapped around the board edge
-            ray.append(curr_sq)
+            # Check if the new 2D coordinate is on the board
+            if not (0 <= nr < 8 and 0 <= nf < 8):
+                break  # Stop if we go off the board
+
+            # Convert the valid 2D coordinate back to a 1D index
+            ray.append(nf * 8 + nr)
+
         RAYS[sq, i, :len(ray)] = ray
 
 # Convert all new tables to JAX arrays
