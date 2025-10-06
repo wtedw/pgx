@@ -148,7 +148,7 @@ class State(abc.ABC):
     """
 
     current_player: Array
-    observation: Array
+    # observation: Array
     rewards: Array
     terminated: Array
     truncated: Array
@@ -234,8 +234,9 @@ class Env(abc.ABC):
 
         """
         state = self._init(key)
-        observation = self.observe(state, state.current_player)
-        return state.replace(observation=observation)  # type: ignore
+        # observation = self.observe(state, state.current_player)
+        # return state.replace(observation=observation)  # type: ignore
+        return state
 
     def step(
         self,
@@ -288,8 +289,8 @@ class Env(abc.ABC):
             lambda: state,
         )
 
-        observation = self.observe(state, state.current_player)
-        state = state.replace(observation=observation)  # type: ignore
+        # observation = self.observe(state, state.current_player)
+        # state = state.replace(observation=observation)  # type: ignore
 
         return state
 
