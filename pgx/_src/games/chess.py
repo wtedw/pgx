@@ -306,7 +306,7 @@ def _apply_move(state: GameState, a: Action) -> GameState:
                     jnp.zeros_like(state.halfmove_count), # CORRECTED: Use zeros_like
                     state.halfmove_count + 1
                 ),
-        fullmove_count=state.fullmove_count + jnp.int32(state.color == 1),
+        fullmove_count=state.fullmove_count + jnp.int16(state.color == 1),
     )
     # castling
     board = state.board
