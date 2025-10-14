@@ -21,7 +21,8 @@ from jax import Array, lax
 
 EMPTY, PAWN, KNIGHT, BISHOP, ROOK, QUEEN, KING = tuple(range(7))  # opponent: -1 * piece
 # MAX_TERMINATION_STEPS = 512  # from AlphaZero paper
-MAX_TERMINATION_STEPS = 256  # from AlphaZero paper
+# MAX_TERMINATION_STEPS = 256  # from AlphaZero paper
+MAX_TERMINATION_STEPS = 320  # from AlphaZero paper
 
 # prepare precomputed values here (e.g., available moves, map to label, etc.)
 
@@ -143,11 +144,11 @@ INIT_ZOBRIST_HASH = jnp.uint32([1455170221, 1478960862])
 
 
 class GameState(NamedTuple):
-    color: Array = jnp.int8(0)  # w: 0, b: 1
+    color: Array = jnp.int16(0)  # w: 0, b: 1
     board: Array = INIT_BOARD  # (64,)
     castling_rights: Array = jnp.ones([2, 2], dtype=jnp.bool_)  # my queen, my king, opp queen, opp king
-    en_passant: Array = jnp.int8(-1)
-    halfmove_count: Array = jnp.int8(0)  # number of moves since the last piece capture or pawn move
+    en_passant: Array = jnp.int16(-1)
+    halfmove_count: Array = jnp.int16(0)  # number of moves since the last piece capture or pawn move
     fullmove_count: Array = jnp.int16(1)  # increase every black move
     hash_history: Array = jnp.zeros((MAX_TERMINATION_STEPS + 1, 2), dtype=jnp.uint32).at[0].set(INIT_ZOBRIST_HASH)
     board_history: Array = jnp.zeros((8, 64), dtype=jnp.int8).at[0, :].set(INIT_BOARD)
@@ -298,7 +299,7 @@ def _apply_move(state: GameState, a: Action) -> GameState:
     )
     is_en_passant = (piece == PAWN) & (jnp.abs(a.to - a.from_) == 2)
     state = state._replace(
-      en_passant=jnp.int8(lax.select(is_en_passant, (a.to + a.from_) // 2, -1))
+      en_passant=jnp.int16(lax.select(is_en_passant, (a.to + a.from_) // 2, -1))
     )
     # update counters
     captured = (_pieces_at(state.board, a.to) < 0) | is_en_passant
