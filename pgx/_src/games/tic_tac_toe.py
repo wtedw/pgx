@@ -47,12 +47,24 @@ class Game:
         if color is None:
             color = state.color
 
-        @jax.vmap
-        def plane(i):
-            return (state.board == i).reshape((3, 3))
+        # 1. Get the grid shape (3x3)
+        grid = state.board.reshape((3, 3))
 
-        x = jax.lax.select(color == 0, jnp.int32([0, 1]), jnp.int32([1, 0]))
-        return jnp.stack(plane(x), -1)
+        # 2. Create the My/Opponent planes
+        my_board = (grid == color)
+        opp_board = (grid == (1 - color))
+
+        # 3. Create the Color plane (All 0s for Player 0, All 1s for Player 1)
+        # This tells the network "Which player am I?" (First or Second)
+        color_plane = jnp.full((3, 3), color, dtype=jnp.bool_)
+
+        # 4. Create the Ones plane (Always all 1s)
+        # This helps CNNs handle borders and provides a constant bias
+        ones_plane = jnp.ones((3, 3), dtype=jnp.bool_)
+
+        # Stack them to get shape (3, 3, 4)
+        return jnp.stack([my_board, opp_board, color_plane, ones_plane], -1)
+
 
     def legal_action_mask(self, state: GameState) -> Array:
         return state.board < 0

@@ -24,7 +24,7 @@ from pgx._src.types import Array, PRNGKey
 @dataclass
 class State(core.State):
     current_player: Array = jnp.int32(0)
-    observation: Array = jnp.zeros((3, 3, 2), dtype=jnp.bool_)
+    observation: Array = jnp.zeros((3, 3, 4), dtype=jnp.bool_)
     rewards: Array = jnp.float32([0.0, 0.0])
     terminated: Array = jnp.bool_(False)
     truncated: Array = jnp.bool_(False)
@@ -43,7 +43,7 @@ class TicTacToe(core.Env):
         self._game = Game()
 
     def _init(self, key: PRNGKey) -> State:
-        current_player = jnp.int32(0)  # First player always starts
+        current_player = jnp.int32(0)
         x = self._game.init()
         return State(current_player=current_player, _x=x)  # type:ignore
 
