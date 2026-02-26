@@ -228,7 +228,7 @@ class Game:
             [
                 board_features,
                 color * ones,
-                jnp.minimum(state.step_count / MAX_TERMINATION_STEPS, 1.0) * ones
+                jnp.minimum(state.step_count / MAX_TERMINATION_STEPS, 1.0) * ones,
                 state.castling_rights.flatten()[:, None, None] * ones,
                 (state.halfmove_count.astype(jnp.float32) / 100.0) * ones,
             ]
