@@ -180,6 +180,8 @@ class Action(NamedTuple):
 
 
 class Game:
+    def __init__(self, auto_terminate: bool = True):
+          self.auto_terminate = auto_terminate
     def init(self) -> GameState:
         return GameState()
 
@@ -226,7 +228,7 @@ class Game:
             [
                 board_features,
                 color * ones,
-                (state.step_count / MAX_TERMINATION_STEPS) * ones,
+                jnp.minimum(state.step_count / MAX_TERMINATION_STEPS, 1.0) * ones
                 state.castling_rights.flatten()[:, None, None] * ones,
                 (state.halfmove_count.astype(jnp.float32) / 100.0) * ones,
             ]
@@ -241,7 +243,8 @@ class Game:
         terminated |= has_insufficient_pieces(state)
         rep = (state.hash_history == _zobrist_hash(state)).all(axis=1).sum() - 1
         terminated |= rep >= 2
-        terminated |= MAX_TERMINATION_STEPS <= state.step_count
+        if self.auto_terminate:
+            terminated |= MAX_TERMINATION_STEPS <= state.step_count
         return terminated
 
     def rewards(self, state: GameState) -> Array:

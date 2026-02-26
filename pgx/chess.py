@@ -60,9 +60,9 @@ class State(core.State):
 
 
 class Chess(core.Env):
-    def __init__(self):
+    def __init__(self, *, auto_terminate: bool = True):
         super().__init__()
-        self.game = Game()
+        self.game = Game(auto_terminate=auto_terminate)
 
     def _init(self, key: PRNGKey) -> State:
         x = GameState()
