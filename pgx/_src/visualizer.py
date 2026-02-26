@@ -269,7 +269,7 @@ class Visualizer:
                     "black",
                     "black",
                 )
-        elif _state.env_id == "chess" or _state.env_id == "chess0":
+        elif _state.env_id == "chess" or _state.env_id == "chess0" or _state.env_id == "chess8":
             from pgx._src.dwg.chess import _make_chess_dwg
 
             self.config["GRID_SIZE"] = 50
