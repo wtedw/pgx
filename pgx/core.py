@@ -155,6 +155,7 @@ class State(abc.ABC):
     terminated: Array
     truncated: Array
     legal_action_mask: Array
+    legal_action_bitmask: Array
     _step_count: Array
 
     @property
@@ -240,22 +241,24 @@ class Env(abc.ABC):
         # return state.replace(observation=observation)  # type: ignore
         return state
 
+    def _check_legality(self, state: State, action: Array) -> Array:
+        “””Returns True if action is legal. Override for games that store a bitmask.”””
+        mask_i32 = state.legal_action_mask.astype(jnp.int32)
+        one_hot_a = jax.nn.one_hot(action, mask_i32.shape[0], dtype=jnp.int32)
+        return jnp.dot(one_hot_a, mask_i32).astype(jnp.bool_)
+
+    def _set_terminal_mask(self, state: State) -> State:
+        “””Set all-legal mask on terminal state. Override for bitmask games.”””
+        return state.replace(legal_action_mask=jnp.ones_like(state.legal_action_mask))  # type: ignore
+
     def step(
         self,
         state: State,
         action: Array,
         key: Optional[Array] = None,
     ) -> State:
-        """Step function."""
-        # 1) cast legal_action mask to int so we can dot-product it
-        mask_i32   = state.legal_action_mask.astype(jnp.int32)    # [A]
-        # 2) build a one-hot row selecting “action”
-        one_hot_a  = jax.nn.one_hot(action, mask_i32.shape[0], dtype=jnp.int32)  # [A]
-        # 3) dot-product to pick out mask[action]
-        #    → yields 1 if legal, 0 if illegal
-        is_legal_i = jnp.dot(one_hot_a, mask_i32)                # scalar 0 or 1
-        # 4) back to bool and invert
-        is_illegal = ~(is_legal_i.astype(bool))
+        “””Step function.”””
+        is_illegal = ~self._check_legality(state, action)
         current_player = state.current_player
 
         # If the state is already terminated or truncated, environment does not take usual step,
@@ -265,14 +268,6 @@ class Env(abc.ABC):
             lambda: state.replace(rewards=jnp.zeros_like(state.rewards)),  # type: ignore
             lambda: self._step(state.replace(_step_count=state._step_count + 1), action, key),  # type: ignore
         )
-
-        # Taking illegal action leads to immediate game terminal with negative reward
-        # [original]
-        # state = jax.lax.cond(
-        #     is_illegal,
-        #     lambda: self._step_with_illegal_action(state, current_player),
-        #     lambda: state,
-        # )
 
         # [optimization]
         # note that we might take illegal action but win the game, also might possibly lose too?
@@ -287,7 +282,7 @@ class Env(abc.ABC):
         # Taking any action at terminal state does not give any effect to the state
         state = jax.lax.cond(
             state.terminated,
-            lambda: state.replace(legal_action_mask=jnp.ones_like(state.legal_action_mask)),  # type: ignore
+            lambda: self._set_terminal_mask(state),  # type: ignore
             lambda: state,
         )
 

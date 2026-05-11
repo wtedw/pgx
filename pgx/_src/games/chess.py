@@ -152,7 +152,6 @@ class GameState(NamedTuple):
     fullmove_count: Array = jnp.int16(1)  # increase every black move
     hash_history: Array = jnp.zeros((MAX_TERMINATION_STEPS + 1, 2), dtype=jnp.uint32).at[0].set(INIT_ZOBRIST_HASH)
     board_history: Array = jnp.zeros((8, 64), dtype=jnp.int8).at[0, :].set(INIT_BOARD)
-    legal_action_mask: Array = INIT_LEGAL_ACTION_MASK
     step_count: Array = jnp.int32(0)
 
 
@@ -189,7 +188,6 @@ class Game:
         state = _apply_move(state, Action._from_label(action))
         state = _flip(state)
         state = _update_history(state)
-        state = state._replace(legal_action_mask=_legal_action_mask(state))
         state = state._replace(step_count=state.step_count + 1)
         return state
 
@@ -235,10 +233,10 @@ class Game:
         ).transpose((1, 2, 0))
 
     def legal_action_mask(self, state: GameState) -> Array:
-        return state.legal_action_mask
+        return _legal_action_mask(state)
 
-    def is_terminal(self, state: GameState) -> Array:
-        terminated = ~state.legal_action_mask.any()
+    def is_terminal(self, state: GameState, legal_action_mask: Array) -> Array:
+        terminated = ~legal_action_mask.any()
         terminated |= state.halfmove_count >= 100
         terminated |= has_insufficient_pieces(state)
         rep = (state.hash_history == _zobrist_hash(state)).all(axis=1).sum() - 1
@@ -247,8 +245,8 @@ class Game:
             terminated |= MAX_TERMINATION_STEPS <= state.step_count
         return terminated
 
-    def rewards(self, state: GameState) -> Array:
-        is_checkmate = (~state.legal_action_mask.any()) & _is_checked(state)
+    def rewards(self, state: GameState, legal_action_mask: Array) -> Array:
+        is_checkmate = (~legal_action_mask.any()) & _is_checked(state)
         return lax.select(
             is_checkmate,
             jnp.ones(2, dtype=jnp.float32).at[state.color].set(-1),

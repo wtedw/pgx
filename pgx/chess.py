@@ -17,10 +17,15 @@ import warnings
 import jax
 import jax.numpy as jnp
 
+from typing import Optional
+
 import pgx.core as core
 from pgx._src.games.chess import INIT_LEGAL_ACTION_MASK, Game, GameState, _flip
 from pgx._src.struct import dataclass
 from pgx._src.types import Array, PRNGKey
+from pgx.experimental.cutils import pack_mask
+
+INIT_LEGAL_ACTION_BITMASK = pack_mask(INIT_LEGAL_ACTION_MASK)
 
 
 @dataclass
@@ -29,7 +34,8 @@ class State(core.State):
     rewards: Array = jnp.float32([0.0, 0.0])
     terminated: Array = jnp.bool_(False)
     truncated: Array = jnp.bool_(False)
-    legal_action_mask: Array = INIT_LEGAL_ACTION_MASK  # 64 * 73 = 4672
+    legal_action_mask: Optional[Array] = None  # not stored; use legal_action_bitmask
+    legal_action_bitmask: Optional[Array] = INIT_LEGAL_ACTION_BITMASK  # 146 uint32 words
     # observation: Array = jnp.zeros((8, 8, 119), dtype=jnp.float32)
     _step_count: Array = jnp.int32(0)
     _player_order: Array = jnp.int32([0, 1])  # [0, 1] or [1, 0]
@@ -79,11 +85,12 @@ class Chess(core.Env):
         del key
         assert isinstance(state, State)
         x = self.game.step(state._x, action)
+        legal_action_mask = self.game.legal_action_mask(x)
         state = state.replace(  # type: ignore
             _x=x,
-            legal_action_mask=x.legal_action_mask,
-            terminated=self.game.is_terminal(x),
-            rewards=self.game.rewards(x)[state._player_order],
+            legal_action_bitmask=pack_mask(legal_action_mask),
+            terminated=self.game.is_terminal(x, legal_action_mask),
+            rewards=self.game.rewards(x, legal_action_mask)[state._player_order],
             current_player=state._player_order[x.color],
         )
         return state  # type: ignore
@@ -94,6 +101,16 @@ class Chess(core.Env):
         x = jax.lax.cond(state.current_player == player_id, lambda: state._x, lambda: _flip(state._x))
         return self.game.observe(x, color)
 
+    def _check_legality(self, state: core.State, action: Array) -> Array:
+        assert isinstance(state, State)
+        word = action // jnp.int32(32)
+        bit = (action % jnp.int32(32)).astype(jnp.uint32)
+        return ((state.legal_action_bitmask[word] >> bit) & jnp.uint32(1)).astype(jnp.bool_)
+
+    def _set_terminal_mask(self, state: core.State) -> core.State:
+        assert isinstance(state, State)
+        return state.replace(legal_action_bitmask=jnp.full_like(state.legal_action_bitmask, jnp.iinfo(jnp.uint32).max))  # type: ignore
+
     @property
     def id(self) -> core.EnvId:
         return "chess"
@@ -101,6 +118,10 @@ class Chess(core.Env):
     @property
     def version(self) -> str:
         return "v2"
+
+    @property
+    def num_actions(self) -> int:
+        return 4672
 
     @property
     def num_players(self) -> int:
