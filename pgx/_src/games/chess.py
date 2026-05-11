@@ -27,7 +27,7 @@ MAX_TERMINATION_STEPS = 512  # from AlphaZero paper
 # prepare precomputed values here (e.g., available moves, map to label, etc.)
 
 # index: a1: 0, a2: 1, ..., h8: 63
-INIT_BOARD = jnp.int16([4, 1, 0, 0, 0, 0, -1, -4, 2, 1, 0, 0, 0, 0, -1, -2, 3, 1, 0, 0, 0, 0, -1, -3, 5, 1, 0, 0, 0, 0, -1, -5, 6, 1, 0, 0, 0, 0, -1, -6, 3, 1, 0, 0, 0, 0, -1, -3, 2, 1, 0, 0, 0, 0, -1, -2, 4, 1, 0, 0, 0, 0, -1, -4])  # fmt: skip
+INIT_BOARD = jnp.int8([4, 1, 0, 0, 0, 0, -1, -4, 2, 1, 0, 0, 0, 0, -1, -2, 3, 1, 0, 0, 0, 0, -1, -3, 5, 1, 0, 0, 0, 0, -1, -5, 6, 1, 0, 0, 0, 0, -1, -6, 3, 1, 0, 0, 0, 0, -1, -3, 2, 1, 0, 0, 0, 0, -1, -2, 4, 1, 0, 0, 0, 0, -1, -4])  # fmt: skip
 # 8  7 15 23 31 39 47 55 63
 # 7  6 14 22 30 38 46 54 62
 # 6  5 13 21 29 37 45 53 61
@@ -158,7 +158,7 @@ class GameState(NamedTuple):
     halfmove_count: Array = jnp.int16(0)  # number of moves since the last piece capture or pawn move
     fullmove_count: Array = jnp.int16(1)  # increase every black move
     hash_history: Array = jnp.zeros((MAX_TERMINATION_STEPS + 1, 2), dtype=jnp.uint32).at[0].set(INIT_ZOBRIST_HASH)
-    board_history: Array = jnp.zeros((8, 64), dtype=jnp.int16).at[0, :].set(INIT_BOARD)
+    board_history: Array = jnp.zeros((8, 64), dtype=jnp.int8).at[0, :].set(INIT_BOARD)
     step_count: Array = jnp.int32(0)
 
 
