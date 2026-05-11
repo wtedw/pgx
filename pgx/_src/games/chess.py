@@ -169,12 +169,20 @@ class Action(NamedTuple):
 
         return Action(from_=from_, to=to, underpromotion=underpromotion)
 
-    def _to_label(self):
-        flat_idx = self.from_ * 64 + self.to            # 0 … 4095
-        plane    = (jax.nn.one_hot(flat_idx, 4096,      # one-hot × table
-                                   dtype=TO_PLANE_FLAT.dtype)
-                    @ TO_PLANE_FLAT)                    # same shape as flat_idx
+    # def _to_label(self):
+    #     flat_idx = self.from_ * 64 + self.to            # 0 … 4095
+    #     plane    = (jax.nn.one_hot(flat_idx, 4096,      # one-hot × table
+    #                                dtype=TO_PLANE_FLAT.dtype)
+    #                 @ TO_PLANE_FLAT)                    # same shape as flat_idx
 
+    #     return self.from_ * 73 + plane
+
+    TO_PLANE_FLAT_BF16 = TO_PLANE_FLAT.astype(jnp.bfloat16)  # precompute once at module level
+
+    def _to_label(self):
+        flat_idx = self.from_ * 64 + self.to                  # 0 … 4095
+        oh = jax.nn.one_hot(flat_idx, 4096, dtype=jnp.bfloat16)
+        plane = (oh @ TO_PLANE_FLAT_BF16).astype(jnp.int32)
         return self.from_ * 73 + plane
 
 
@@ -368,13 +376,17 @@ def _flip(state: GameState) -> GameState:
 # helper: gather-free LEGAL_DEST[piece, from_]  ➜  (27,) int32
 # ---------------------------------------------------------------------
 
-def _legal_dest(piece: Array, frm: Array) -> Array:
-    # flat = piece * 64 + frm                              # 0 … 447
-    # oh   = jax.nn.one_hot(flat, 7 * 64, dtype=jnp.int32) # (448,)
-    # return oh @ LEGAL_DEST_FLAT                          # (27,)
+# def _legal_dest(piece: Array, frm: Array) -> Array:
+#     flat = piece * 64 + frm                              # 0 … 447
+#     oh   = jax.nn.one_hot(flat, 7 * 64, dtype=jnp.int32) # (448,)
+#     return oh @ LEGAL_DEST_FLAT                          # (27,)
 
-    return LEGAL_DEST[piece, frm]
+LEGAL_DEST_FLAT_BF16 = LEGAL_DEST_FLAT.astype(jnp.bfloat16)
 
+def _legal_dest(piece, frm):
+    flat = piece * 64 + frm
+    oh = jax.nn.one_hot(flat, 7 * 64, dtype=jnp.bfloat16)
+    return (oh @ LEGAL_DEST_FLAT_BF16).astype(jnp.int32)
 
 
 def _legal_action_mask(state: GameState) -> Array:
