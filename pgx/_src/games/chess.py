@@ -369,9 +369,13 @@ def _flip(state: GameState) -> GameState:
 # ---------------------------------------------------------------------
 
 def _legal_dest(piece: Array, frm: Array) -> Array:
-    flat = piece * 64 + frm                              # 0 … 447
-    oh   = jax.nn.one_hot(flat, 7 * 64, dtype=jnp.int32) # (448,)
-    return oh @ LEGAL_DEST_FLAT                          # (27,)
+    # flat = piece * 64 + frm                              # 0 … 447
+    # oh   = jax.nn.one_hot(flat, 7 * 64, dtype=jnp.int32) # (448,)
+    # return oh @ LEGAL_DEST_FLAT                          # (27,)
+
+    return LEGAL_DEST[piece, frm]
+
+
 
 def _legal_action_mask(state: GameState) -> Array:
     def legal_normal_moves(from_):
