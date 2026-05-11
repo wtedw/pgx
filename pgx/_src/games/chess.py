@@ -177,63 +177,86 @@ class Action(NamedTuple):
     #     return Action(from_=from_, to=to, underpromotion=underpromotion)
 
     @staticmethod
-    def _from_label(label):
+    def _from_label(label: jax.Array):
         from_ = label // 73
         plane = label % 73
         r0, c0 = from_ % 8, from_ // 8
-        underpromotion = lax.select(plane >= 9, -1, plane // 3)
 
-        # Underpromotion to-square: from_ + [+1, +9, -7][plane % 3]
-        up_off = (jnp.where(plane % 3 == 0, +1, 0)
-                + jnp.where(plane % 3 == 1, +9, 0)
-                + jnp.where(plane % 3 == 2, -7, 0))
+        underpromotion = jax.lax.select(plane >= 9, -1, plane // 3)
+
+        # --- Underpromotion (planes 0..8) ---
+        # offsets: +1 (straight), +9 (capture right), -7 (capture left)
+        up_off = (
+            jnp.where(plane % 3 == 0, 1, 0) +
+            jnp.where(plane % 3 == 1, 9, 0) +
+            jnp.where(plane % 3 == 2, -7, 0)
+        )
         up_to = from_ + up_off
 
-        # Slider: dir_code = (plane - 9) // 7, offset = (plane - 9) % 7
+        # Algebraically, for bounds checking
+        up_dr = 1
+        up_dc = jnp.where(plane % 3 == 0, 0, jnp.where(plane % 3 == 1, 1, -1))
+
+        # --- Slider (planes 9..64) ---
         p = plane - 9
         dir_code = p // 7
         offset = p % 7
+
         # Even dirs: distance = 7 - offset. Odd: distance = offset + 1.
         distance = jnp.where(dir_code % 2 == 0, 7 - offset, offset + 1)
-        # dr/dc per direction (see _to_label slot table)
-        # 0:down(-,0) 1:up(+,0) 2:left(0,-) 3:right(0,+)
-        # 4:dl(-,-)   5:ur(+,+) 6:ul(+,-)   7:dr(-,+)
-        dr_sign = (jnp.where(dir_code == 1, +1, 0) + jnp.where(dir_code == 0, -1, 0)
-                + jnp.where(dir_code == 5, +1, 0) + jnp.where(dir_code == 4, -1, 0)
-                + jnp.where(dir_code == 6, +1, 0) + jnp.where(dir_code == 7, -1, 0))
-        dc_sign = (jnp.where(dir_code == 3, +1, 0) + jnp.where(dir_code == 2, -1, 0)
-                + jnp.where(dir_code == 5, +1, 0) + jnp.where(dir_code == 4, -1, 0)
-                + jnp.where(dir_code == 7, +1, 0) + jnp.where(dir_code == 6, -1, 0))
+
+        dr_sign = (
+            jnp.where(dir_code == 1, 1, 0) + jnp.where(dir_code == 0, -1, 0) +
+            jnp.where(dir_code == 5, 1, 0) + jnp.where(dir_code == 4, -1, 0) +
+            jnp.where(dir_code == 6, 1, 0) + jnp.where(dir_code == 7, -1, 0)
+        )
+        dc_sign = (
+            jnp.where(dir_code == 3, 1, 0) + jnp.where(dir_code == 2, -1, 0) +
+            jnp.where(dir_code == 5, 1, 0) + jnp.where(dir_code == 4, -1, 0) +
+            jnp.where(dir_code == 7, 1, 0) + jnp.where(dir_code == 6, -1, 0)
+        )
         slider_to = (c0 + dc_sign * distance) * 8 + (r0 + dr_sign * distance)
 
-        # Knight (planes 65..72), dr/dc table:
-        # 65:(-1,-2) 66:(+1,-2) 67:(-2,-1) 68:(+2,-1)
-        # 69:(-1,+2) 70:(+1,+2) 71:(-2,+1) 72:(+2,+1)
-        kn_dr = (jnp.where(plane == 65, -1, 0) + jnp.where(plane == 66, +1, 0)
-              + jnp.where(plane == 67, -2, 0) + jnp.where(plane == 68, +2, 0)
-              + jnp.where(plane == 69, -1, 0) + jnp.where(plane == 70, +1, 0)
-              + jnp.where(plane == 71, -2, 0) + jnp.where(plane == 72, +2, 0))
-        kn_dc = (jnp.where((plane >= 65) & (plane <= 68), -2 + 0, 0)  # quick & dirty
-              + ...)
-        # easier: enumerate all 8
-        kn_dc = (jnp.where((plane == 65) | (plane == 66), -2, 0)
-              + jnp.where((plane == 67) | (plane == 68), -1, 0)
-              + jnp.where((plane == 69) | (plane == 70), +2, 0)
-              + jnp.where((plane == 71) | (plane == 72), +1, 0))
+        # --- Knight (planes 65..72) ---
+        kn_dr = (
+            jnp.where(plane == 65, -1, 0) + jnp.where(plane == 66, 1, 0) +
+            jnp.where(plane == 67, -2, 0) + jnp.where(plane == 68, 2, 0) +
+            jnp.where(plane == 69, -1, 0) + jnp.where(plane == 70, 1, 0) +
+            jnp.where(plane == 71, -2, 0) + jnp.where(plane == 72, 2, 0)
+        )
+        kn_dc = (
+            jnp.where((plane == 65) | (plane == 66), -2, 0) +
+            jnp.where((plane == 67) | (plane == 68), -1, 0) +
+            jnp.where((plane == 69) | (plane == 70), 2, 0) +
+            jnp.where((plane == 71) | (plane == 72), 1, 0)
+        )
         knight_to = (c0 + kn_dc) * 8 + (r0 + kn_dr)
 
+        # --- Combine targets ---
         is_knight = plane >= 65
         is_underpromo = plane < 9
-        to = jnp.where(is_underpromo, up_to,
-            jnp.where(is_knight, knight_to, slider_to))
-        # Sentinel: result must be -1 if out of bounds (matches FROM_PLANE behavior)
-        new_r = r0 + jnp.where(is_knight, kn_dr, jnp.where(is_underpromo, 0, dr_sign * distance))
-        new_c = c0 + jnp.where(is_knight, kn_dc, jnp.where(is_underpromo, 0, dc_sign * distance))
+
+        to = jnp.where(
+            is_underpromo, up_to,
+            jnp.where(is_knight, knight_to, slider_to)
+        )
+
+        # --- Strict Bounds Checking ---
+        dr = jnp.where(is_knight, kn_dr, jnp.where(is_underpromo, up_dr, dr_sign * distance))
+        dc = jnp.where(is_knight, kn_dc, jnp.where(is_underpromo, up_dc, dc_sign * distance))
+
+        new_r = r0 + dr
+        new_c = c0 + dc
+
         in_bounds = (new_r >= 0) & (new_r < 8) & (new_c >= 0) & (new_c < 8)
-        to = jnp.where(in_bounds, to, -1)
+
+        # Underpromotion is strictly only legally generated from rank 6
+        valid_underpromo = (r0 == 6)
+        is_valid = jnp.where(is_underpromo, in_bounds & valid_underpromo, in_bounds)
+
+        to = jnp.where(is_valid, to, -1)
 
         return Action(from_=from_, to=to, underpromotion=underpromotion)
-
     # def _to_label(self):
     #     flat_idx = self.from_ * 64 + self.to            # 0 … 4095
     #     plane    = (jax.nn.one_hot(flat_idx, 4096,      # one-hot × table
