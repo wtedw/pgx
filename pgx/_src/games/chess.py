@@ -142,9 +142,13 @@ ZOBRIST_CASTLING = jax.random.randint(keys[2], shape=(4, 2), minval=0, maxval=2*
 ZOBRIST_EN_PASSANT = jax.random.randint(keys[3], shape=(65, 2), minval=0, maxval=2**31 - 1, dtype=jnp.uint32)
 INIT_ZOBRIST_HASH = jnp.uint32([1455170221, 1478960862])
 
-TO_PLANE_FLAT_BF16 = TO_PLANE_FLAT.astype(jnp.bfloat16)
-LEGAL_DEST_FLAT_BF16 = LEGAL_DEST_FLAT.astype(jnp.bfloat16)
+_DIR_LUT = jnp.int32([4, 0, 7, 2, 0, 3, 6, 1, 5])
 
+_KNIGHT_LUT_np = [[-1]*5 for _ in range(5)]
+for _kdr, _kdc, _idx in [(-1,-2,0),(+1,-2,1),(-2,-1,2),(+2,-1,3),
+                         (-1,+2,4),(+1,+2,5),(-2,+1,6),(+2,+1,7)]:
+    _KNIGHT_LUT_np[_kdr + 2][_kdc + 2] = 65 + _idx
+_KNIGHT_LUT = jnp.int32(_KNIGHT_LUT_np)
 
 class GameState(NamedTuple):
     color: Array = jnp.int16(0)  # w: 0, b: 1
@@ -181,9 +185,22 @@ class Action(NamedTuple):
     #     return self.from_ * 73 + plane
 
     def _to_label(self):
-        flat_idx = self.from_ * 64 + self.to                  # 0 … 4095
-        oh = jax.nn.one_hot(flat_idx, 4096, dtype=jnp.bfloat16)
-        plane = (oh @ TO_PLANE_FLAT_BF16).astype(jnp.int32)
+        r0, c0 = self.from_ % 8, self.from_ // 8
+        r1, c1 = self.to % 8,    self.to // 8
+        dr, dc = r1 - r0, c1 - c0
+
+        sdr = jnp.sign(dr)
+        sdc = jnp.sign(dc)
+        dir_code = _DIR_LUT[(sdr + 1) * 3 + (sdc + 1)]
+        distance = jnp.maximum(jnp.abs(dr), jnp.abs(dc))
+        reversed_dist = (dir_code % 2) == 0
+        dist_offset = jnp.where(reversed_dist, 7 - distance, distance - 1)
+        slider_plane = 9 + dir_code * 7 + dist_offset
+
+        knight_plane = _KNIGHT_LUT[dr + 2, dc + 2]
+
+        is_knight = (jnp.abs(dr) * jnp.abs(dc)) == 2
+        plane = jnp.where(is_knight, knight_plane, slider_plane)
         return self.from_ * 73 + plane
 
 
@@ -377,16 +394,12 @@ def _flip(state: GameState) -> GameState:
 # helper: gather-free LEGAL_DEST[piece, from_]  ➜  (27,) int32
 # ---------------------------------------------------------------------
 
-# def _legal_dest(piece: Array, frm: Array) -> Array:
-#     flat = piece * 64 + frm                              # 0 … 447
-#     oh   = jax.nn.one_hot(flat, 7 * 64, dtype=jnp.int32) # (448,)
-#     return oh @ LEGAL_DEST_FLAT                          # (27,)
+def _legal_dest(piece: Array, frm: Array) -> Array:
+    flat = piece * 64 + frm                              # 0 … 447
+    oh   = jax.nn.one_hot(flat, 7 * 64, dtype=jnp.int32) # (448,)
+    return oh @ LEGAL_DEST_FLAT                          # (27,)
 
 
-def _legal_dest(piece, frm):
-    flat = piece * 64 + frm
-    oh = jax.nn.one_hot(flat, 7 * 64, dtype=jnp.bfloat16)
-    return (oh @ LEGAL_DEST_FLAT_BF16).astype(jnp.int32)
 
 
 def _legal_action_mask(state: GameState) -> Array:
