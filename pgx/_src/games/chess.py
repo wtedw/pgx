@@ -142,6 +142,9 @@ ZOBRIST_CASTLING = jax.random.randint(keys[2], shape=(4, 2), minval=0, maxval=2*
 ZOBRIST_EN_PASSANT = jax.random.randint(keys[3], shape=(65, 2), minval=0, maxval=2**31 - 1, dtype=jnp.uint32)
 INIT_ZOBRIST_HASH = jnp.uint32([1455170221, 1478960862])
 
+TO_PLANE_FLAT_BF16 = TO_PLANE_FLAT.astype(jnp.bfloat16)
+LEGAL_DEST_FLAT_BF16 = LEGAL_DEST_FLAT.astype(jnp.bfloat16)
+
 
 class GameState(NamedTuple):
     color: Array = jnp.int16(0)  # w: 0, b: 1
@@ -176,8 +179,6 @@ class Action(NamedTuple):
     #                 @ TO_PLANE_FLAT)                    # same shape as flat_idx
 
     #     return self.from_ * 73 + plane
-
-    TO_PLANE_FLAT_BF16 = TO_PLANE_FLAT.astype(jnp.bfloat16)  # precompute once at module level
 
     def _to_label(self):
         flat_idx = self.from_ * 64 + self.to                  # 0 … 4095
@@ -381,7 +382,6 @@ def _flip(state: GameState) -> GameState:
 #     oh   = jax.nn.one_hot(flat, 7 * 64, dtype=jnp.int32) # (448,)
 #     return oh @ LEGAL_DEST_FLAT                          # (27,)
 
-LEGAL_DEST_FLAT_BF16 = LEGAL_DEST_FLAT.astype(jnp.bfloat16)
 
 def _legal_dest(piece, frm):
     flat = piece * 64 + frm
