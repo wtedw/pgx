@@ -189,20 +189,62 @@ class Action(NamedTuple):
         r1, c1 = self.to % 8,    self.to // 8
         dr, dc = r1 - r0, c1 - c0
 
-        sdr = jnp.sign(dr)
-        sdc = jnp.sign(dc)
-        dir_code = _DIR_LUT[(sdr + 1) * 3 + (sdc + 1)]
-        distance = jnp.maximum(jnp.abs(dr), jnp.abs(dc))
-        reversed_dist = (dir_code % 2) == 0
-        dist_offset = jnp.where(reversed_dist, 7 - distance, distance - 1)
-        slider_plane = 9 + dir_code * 7 + dist_offset
+        abs_dr = jnp.abs(dr)
+        abs_dc = jnp.abs(dc)
+        distance = jnp.maximum(abs_dr, abs_dc)
 
-        knight_plane = _KNIGHT_LUT[dr + 2, dc + 2]
+        # --- Slider direction code (0..7), built from sign comparisons ---
+        # 0:down(dr<0,dc=0)   1:up(dr>0,dc=0)   2:left(dr=0,dc<0)   3:right(dr=0,dc>0)
+        # 4:down-left         5:up-right        6:up-left           7:down-right
+        dr_neg = dr < 0
+        dr_pos = dr > 0
+        dc_neg = dc < 0
+        dc_pos = dc > 0
+        dr_zero = ~(dr_neg | dr_pos)
+        dc_zero = ~(dc_neg | dc_pos)
 
-        is_knight = (jnp.abs(dr) * jnp.abs(dc)) == 2
+        is_down       = dr_neg & dc_zero
+        is_up         = dr_pos & dc_zero
+        is_left       = dr_zero & dc_neg
+        is_right      = dr_zero & dc_pos
+        is_down_left  = dr_neg & dc_neg
+        is_up_right   = dr_pos & dc_pos
+        is_up_left    = dr_pos & dc_neg
+        is_down_right = dr_neg & dc_pos
+
+        # Even-indexed directions (0,2,4,6) encode distance as (7 - d);
+        # odd-indexed (1,3,5,7) as (d - 1).
+        fwd = distance - 1
+        rev = 7 - distance
+
+        slider_plane = (
+            jnp.where(is_down,       9  + 0*7 + rev, 0)
+          + jnp.where(is_up,         9  + 1*7 + fwd, 0)
+          + jnp.where(is_left,       9  + 2*7 + rev, 0)
+          + jnp.where(is_right,      9  + 3*7 + fwd, 0)
+          + jnp.where(is_down_left,  9  + 4*7 + rev, 0)
+          + jnp.where(is_up_right,   9  + 5*7 + fwd, 0)
+          + jnp.where(is_up_left,    9  + 6*7 + rev, 0)
+          + jnp.where(is_down_right, 9  + 7*7 + fwd, 0)
+        )
+
+        # --- Knight plane (8 fixed offsets), pure arithmetic ---
+        # 65:(-1,-2)  66:(+1,-2)  67:(-2,-1)  68:(+2,-1)
+        # 69:(-1,+2)  70:(+1,+2)  71:(-2,+1)  72:(+2,+1)
+        knight_plane = (
+            jnp.where((dr == -1) & (dc == -2), 65, 0)
+          + jnp.where((dr == +1) & (dc == -2), 66, 0)
+          + jnp.where((dr == -2) & (dc == -1), 67, 0)
+          + jnp.where((dr == +2) & (dc == -1), 68, 0)
+          + jnp.where((dr == -1) & (dc == +2), 69, 0)
+          + jnp.where((dr == +1) & (dc == +2), 70, 0)
+          + jnp.where((dr == -2) & (dc == +1), 71, 0)
+          + jnp.where((dr == +2) & (dc == +1), 72, 0)
+        )
+
+        is_knight = (abs_dr * abs_dc) == 2
         plane = jnp.where(is_knight, knight_plane, slider_plane)
         return self.from_ * 73 + plane
-
 
 class Game:
     def __init__(self, auto_terminate: bool = True):
