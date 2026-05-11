@@ -242,13 +242,13 @@ class Env(abc.ABC):
         return state
 
     def _check_legality(self, state: State, action: Array) -> Array:
-        “””Returns True if action is legal. Override for games that store a bitmask.”””
+        """Returns True if action is legal. Override for games that store a bitmask."""
         mask_i32 = state.legal_action_mask.astype(jnp.int32)
         one_hot_a = jax.nn.one_hot(action, mask_i32.shape[0], dtype=jnp.int32)
         return jnp.dot(one_hot_a, mask_i32).astype(jnp.bool_)
 
     def _set_terminal_mask(self, state: State) -> State:
-        “””Set all-legal mask on terminal state. Override for bitmask games.”””
+        """Set all-legal mask on terminal state. Override for bitmask games."""
         return state.replace(legal_action_mask=jnp.ones_like(state.legal_action_mask))  # type: ignore
 
     def step(
@@ -257,7 +257,6 @@ class Env(abc.ABC):
         action: Array,
         key: Optional[Array] = None,
     ) -> State:
-        “””Step function.”””
         is_illegal = ~self._check_legality(state, action)
         current_player = state.current_player
 
