@@ -155,8 +155,8 @@ class State(abc.ABC):
     terminated: Array
     truncated: Array
     legal_action_mask: Array
-    legal_action_bitmask: Array
     _step_count: Array
+    legal_action_bitmask: Array = None
 
     @property
     @abc.abstractmethod
