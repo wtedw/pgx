@@ -741,64 +741,142 @@ KNIGHT_ATTACKS, KING_ATTACKS, PAWN_ATTACKS, RAYS, PIECE_RAY_MAP = (
     jnp.array(x) for x in (KNIGHT_ATTACKS, KING_ATTACKS, PAWN_ATTACKS, RAYS, PIECE_RAY_MAP)
 )
 
+# v2
+# def _is_attacked(state: GameState, pos: Array):
+#     """
+#     A fully vectorized, gather-free check for whether a square is attacked.
+#     This version uses ray-casting for sliding pieces and direct lookups for others,
+#     avoiding expensive vmap operations.
+#     """
+#     board = state.board
+
+#     # Create a one-hot vector to serve as a selector for the given position `pos`.
+#     one_hot_pos = jax.nn.one_hot(pos, 64, dtype=jnp.int32)
+
+#     # --- 1. Direct attacks (Knight, Pawn, King) ---
+#     knight_attack_squares = one_hot_pos @ KNIGHT_ATTACKS
+#     knights = _pieces_at(board, knight_attack_squares)
+#     is_attacked_by_knight = (knights == -KNIGHT).any()
+
+#     pawn_attack_squares = one_hot_pos @ PAWN_ATTACKS
+#     pawns = _pieces_at(board, pawn_attack_squares)
+#     is_attacked_by_pawn = (pawns == -PAWN).any()
+
+#     king_attack_squares = one_hot_pos @ KING_ATTACKS
+#     kings = _pieces_at(board, king_attack_squares)
+#     is_attacked_by_king = (kings == -KING).any()
+
+#     by_near = is_attacked_by_knight | is_attacked_by_pawn | is_attacked_by_king
+
+#     # --- 2. Sliding attacks (Rook, Bishop, Queen) ---
+
+#     # Use tensordot to select the (8, 7) slice from the RAYS table.
+#     # ray_squares = jnp.tensordot(one_hot_pos, RAYS, axes=([0], [0]))
+#     r0, c0 = pos % 8, pos // 8
+#     DR = jnp.int32([0, 1, 1, 1, 0, -1, -1, -1])  # (8,)
+#     DC = jnp.int32([1, 1, 0, -1, -1, -1, 0, 1])  # (8,)
+#     distances = jnp.arange(1, 8, dtype=jnp.int32)  # (7,)
+
+#     # (8, 7) broadcast
+#     new_r = r0 + DR[:, None] * distances[None, :]
+#     new_c = c0 + DC[:, None] * distances[None, :]
+#     in_bounds = (new_r >= 0) & (new_r < 8) & (new_c >= 0) & (new_c < 8)
+#     ray_squares = jnp.where(in_bounds, new_c * 8 + new_r, -1)  # (8, 7)
+#     pieces_on_rays = _pieces_at(board, ray_squares)  # Shape: (8, 7)
+
+#     # Find the first piece encountered in each of the 8 directions.
+#     is_blocker = pieces_on_rays != EMPTY
+#     # `argmax` gives the distance (0-6) to the first blocker in each ray.
+#     dist_to_first_blocker = jnp.argmax(is_blocker, axis=1)
+#     ray_has_blocker = is_blocker.any(axis=1)
+
+#     # Use one-hot multiplication to select the piece at the blocker's position.
+#     one_hot_dist = jax.nn.one_hot(dist_to_first_blocker, 7, dtype=board.dtype)
+#     first_blocker_piece = (pieces_on_rays * one_hot_dist).sum(axis=1)
+#     # Ignore the result if the ray was actually empty.
+#     first_blocker_piece = jnp.where(ray_has_blocker, first_blocker_piece, EMPTY)
+
+#     # Check if the blocking piece is an opponent's sliding piece that can attack along that ray.
+#     is_opponent_blocker = first_blocker_piece < 0
+
+#     # Check if the piece type can move along the given ray direction.
+#     one_hot_piece_type = jax.nn.one_hot(jnp.abs(first_blocker_piece), 7, dtype=jnp.bool_)
+#     can_piece_attack_on_ray = (one_hot_piece_type * PIECE_RAY_MAP.T).sum(axis=1)
+
+#     by_slider = (is_opponent_blocker & can_piece_attack_on_ray).any()
+
+#     return by_near | by_slider
+
+# v3
 def _is_attacked(state: GameState, pos: Array):
     """
     A fully vectorized, gather-free check for whether a square is attacked.
-    This version uses ray-casting for sliding pieces and direct lookups for others,
-    avoiding expensive vmap operations.
+    Uses inline arithmetic for KNIGHT/KING/PAWN/RAYS lookups, and ray-casting
+    for sliding pieces, avoiding expensive one-hot @ table matmuls under vmap.
     """
     board = state.board
+    r0, c0 = pos % 8, pos // 8
 
-    # Create a one-hot vector to serve as a selector for the given position `pos`.
-    one_hot_pos = jax.nn.one_hot(pos, 64, dtype=jnp.int32)
+    # --- 1. Direct attacks (Knight, Pawn, King) — arithmetic, no tables ---
 
-    # --- 1. Direct attacks (Knight, Pawn, King) ---
-    knight_attack_squares = one_hot_pos @ KNIGHT_ATTACKS
+    # Knight attackers: 8 knight offsets relative to `pos`.
+    KN_DR = jnp.int32([1, 1, -1, -1, 2, 2, -2, -2])
+    KN_DC = jnp.int32([2, -2, 2, -2, 1, -1, 1, -1])
+    kn_r = r0 + KN_DR
+    kn_c = c0 + KN_DC
+    kn_in_bounds = (kn_r >= 0) & (kn_r < 8) & (kn_c >= 0) & (kn_c < 8)
+    knight_attack_squares = jnp.where(kn_in_bounds, kn_c * 8 + kn_r, -1)  # (8,)
     knights = _pieces_at(board, knight_attack_squares)
     is_attacked_by_knight = (knights == -KNIGHT).any()
 
-    pawn_attack_squares = one_hot_pos @ PAWN_ATTACKS
-    pawns = _pieces_at(board, pawn_attack_squares)
-    is_attacked_by_pawn = (pawns == -PAWN).any()
-
-    king_attack_squares = one_hot_pos @ KING_ATTACKS
+    # King attackers: 8 surrounding squares.
+    K_DR = jnp.int32([-1, -1, -1,  0, 0,  1, 1, 1])
+    K_DC = jnp.int32([-1,  0,  1, -1, 1, -1, 0, 1])
+    k_r = r0 + K_DR
+    k_c = c0 + K_DC
+    k_in_bounds = (k_r >= 0) & (k_r < 8) & (k_c >= 0) & (k_c < 8)
+    king_attack_squares = jnp.where(k_in_bounds, k_c * 8 + k_r, -1)  # (8,)
     kings = _pieces_at(board, king_attack_squares)
     is_attacked_by_king = (kings == -KING).any()
 
+    # Pawn attackers: at rank+1, files c0-1 and c0+1.
+    pawn_r = r0 + 1
+    pawn_rank_ok = pawn_r < 8
+    pawn_left_ok = pawn_rank_ok & (c0 - 1 >= 0)
+    pawn_right_ok = pawn_rank_ok & (c0 + 1 < 8)
+    pawn_left = jnp.where(pawn_left_ok, (c0 - 1) * 8 + pawn_r, -1)
+    pawn_right = jnp.where(pawn_right_ok, (c0 + 1) * 8 + pawn_r, -1)
+    pawn_attack_squares = jnp.stack([pawn_left, pawn_right])  # (2,)
+    pawns = _pieces_at(board, pawn_attack_squares)
+    is_attacked_by_pawn = (pawns == -PAWN).any()
+
     by_near = is_attacked_by_knight | is_attacked_by_pawn | is_attacked_by_king
 
-    # --- 2. Sliding attacks (Rook, Bishop, Queen) ---
+    # --- 2. Sliding attacks (Rook, Bishop, Queen) — arithmetic, no RAYS table ---
 
-    # Use tensordot to select the (8, 7) slice from the RAYS table.
-    # ray_squares = jnp.tensordot(one_hot_pos, RAYS, axes=([0], [0]))
-    r0, c0 = pos % 8, pos // 8
-    DR = jnp.int32([0, 1, 1, 1, 0, -1, -1, -1])  # (8,)
+    DR = jnp.int32([0, 1, 1, 1, 0, -1, -1, -1])  # (8,) directions: E, NE, N, NW, W, SW, S, SE
     DC = jnp.int32([1, 1, 0, -1, -1, -1, 0, 1])  # (8,)
     distances = jnp.arange(1, 8, dtype=jnp.int32)  # (7,)
-
-    # (8, 7) broadcast
     new_r = r0 + DR[:, None] * distances[None, :]
     new_c = c0 + DC[:, None] * distances[None, :]
     in_bounds = (new_r >= 0) & (new_r < 8) & (new_c >= 0) & (new_c < 8)
     ray_squares = jnp.where(in_bounds, new_c * 8 + new_r, -1)  # (8, 7)
-    pieces_on_rays = _pieces_at(board, ray_squares)  # Shape: (8, 7)
+    pieces_on_rays = _pieces_at(board, ray_squares)  # (8, 7)
 
     # Find the first piece encountered in each of the 8 directions.
     is_blocker = pieces_on_rays != EMPTY
-    # `argmax` gives the distance (0-6) to the first blocker in each ray.
     dist_to_first_blocker = jnp.argmax(is_blocker, axis=1)
     ray_has_blocker = is_blocker.any(axis=1)
 
-    # Use one-hot multiplication to select the piece at the blocker's position.
+    # Select the piece at the blocker's position via one-hot.
     one_hot_dist = jax.nn.one_hot(dist_to_first_blocker, 7, dtype=board.dtype)
     first_blocker_piece = (pieces_on_rays * one_hot_dist).sum(axis=1)
-    # Ignore the result if the ray was actually empty.
     first_blocker_piece = jnp.where(ray_has_blocker, first_blocker_piece, EMPTY)
 
-    # Check if the blocking piece is an opponent's sliding piece that can attack along that ray.
+    # Is the blocker an opponent's sliding piece?
     is_opponent_blocker = first_blocker_piece < 0
 
-    # Check if the piece type can move along the given ray direction.
+    # Can the piece type move along this ray direction?
     one_hot_piece_type = jax.nn.one_hot(jnp.abs(first_blocker_piece), 7, dtype=jnp.bool_)
     can_piece_attack_on_ray = (one_hot_piece_type * PIECE_RAY_MAP.T).sum(axis=1)
 
