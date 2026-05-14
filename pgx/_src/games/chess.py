@@ -546,8 +546,7 @@ def _legal_action_mask(state: GameState) -> Array:
 
             return lax.select(ok, Action(from_=from_, to=to)._to_label(), -1)
 
-        return jax.vmap(legal_label)(jnp.arange(64, dtype=jnp.int32))
-        # return jax.vmap(legal_label)(_legal_dest(piece, from_))
+        return jax.vmap(legal_label)(_legal_dest(piece, from_))
 
     def legal_en_passants():
         to = state.en_passant
@@ -772,7 +771,8 @@ def _is_attacked(state: GameState, pos: Array):
 
     # Use tensordot to select the (8, 7) slice from the RAYS table.
     ray_squares = jnp.tensordot(one_hot_pos, RAYS, axes=([0], [0]))
-    pieces_on_rays = _pieces_at(board, ray_squares)  # Shape: (8, 7)
+    # pieces_on_rays = _pieces_at(board, ray_squares)  # Shape: (8, 7)
+    pieces_on_rays = board[ray_squares]
 
     # Find the first piece encountered in each of the 8 directions.
     is_blocker = pieces_on_rays != EMPTY
