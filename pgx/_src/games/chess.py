@@ -593,6 +593,8 @@ def _legal_action_mask(state: GameState) -> Array:
     # The original code used jnp.nonzero to filter out -1s, which is slow.
     # We replace it with lax.top_k, which is a single, fast sort operation.
     # It efficiently collects all valid moves (>=0) at the front of a fixed-size array.
+    #
+    # 128 instead of 200 saves 4ms
     actions, _ = lax.top_k(actions, k=128)
 
 
