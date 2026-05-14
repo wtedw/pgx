@@ -770,9 +770,18 @@ def _is_attacked(state: GameState, pos: Array):
     # --- 2. Sliding attacks (Rook, Bishop, Queen) ---
 
     # Use tensordot to select the (8, 7) slice from the RAYS table.
-    ray_squares = jnp.tensordot(one_hot_pos, RAYS, axes=([0], [0]))
-    # pieces_on_rays = _pieces_at(board, ray_squares)  # Shape: (8, 7)
-    pieces_on_rays = board[ray_squares]
+    # ray_squares = jnp.tensordot(one_hot_pos, RAYS, axes=([0], [0]))
+    r0, c0 = pos % 8, pos // 8
+    DR = jnp.int32([0, 1, 1, 1, 0, -1, -1, -1])  # (8,)
+    DC = jnp.int32([1, 1, 0, -1, -1, -1, 0, 1])  # (8,)
+    distances = jnp.arange(1, 8, dtype=jnp.int32)  # (7,)
+
+    # (8, 7) broadcast
+    new_r = r0 + DR[:, None] * distances[None, :]
+    new_c = c0 + DC[:, None] * distances[None, :]
+    in_bounds = (new_r >= 0) & (new_r < 8) & (new_c >= 0) & (new_c < 8)
+    ray_squares = jnp.where(in_bounds, new_c * 8 + new_r, -1)  # (8, 7)
+    pieces_on_rays = _pieces_at(board, ray_squares)  # Shape: (8, 7)
 
     # Find the first piece encountered in each of the 8 directions.
     is_blocker = pieces_on_rays != EMPTY
