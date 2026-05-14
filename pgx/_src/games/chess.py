@@ -593,7 +593,7 @@ def _legal_action_mask(state: GameState) -> Array:
     # The original code used jnp.nonzero to filter out -1s, which is slow.
     # We replace it with lax.top_k, which is a single, fast sort operation.
     # It efficiently collects all valid moves (>=0) at the front of a fixed-size array.
-    actions, _ = lax.top_k(actions, k=200)
+    actions, _ = lax.top_k(actions, k=128)
 
 
     # Filter actions by checking for suicides (moves that leave the king in check).
@@ -807,7 +807,7 @@ KNIGHT_ATTACKS, KING_ATTACKS, PAWN_ATTACKS, RAYS, PIECE_RAY_MAP = (
 
 #     return by_near | by_slider
 
-# v3
+# v3, 4ms faster than v2
 def _is_attacked(state: GameState, pos: Array):
     """
     A fully vectorized, gather-free check for whether a square is attacked.
