@@ -595,7 +595,7 @@ def _legal_action_mask(state: GameState) -> Array:
     # It efficiently collects all valid moves (>=0) at the front of a fixed-size array.
     #
     # 128 instead of 200 saves 4ms
-    actions, _ = lax.top_k(actions, k=128)
+    actions, _ = lax.top_k(actions, k=192)
 
 
     # Filter actions by checking for suicides (moves that leave the king in check).
