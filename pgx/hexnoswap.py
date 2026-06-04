@@ -101,7 +101,7 @@ def _step(state: State, action: Array, size: int) -> State:
     won    = _is_game_end(board, size, state._turn)
     reward = jax.lax.cond(
         won,
-        lambda: jnp.ones(2, jnp.float32),
+        lambda: jnp.float32([-1.0, -1.0]).at[state.current_player].set(1.0),
         lambda: jnp.zeros(2, jnp.float32),
     )
 
