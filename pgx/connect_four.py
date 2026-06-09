@@ -43,7 +43,7 @@ class ConnectFour(core.Env):
         self._game = Game()
 
     def _init(self, key: PRNGKey) -> State:
-        current_player = jnp.int32(jax.random.bernoulli(key))
+        current_player = jnp.int32(0)  # First player always starts
         return State(current_player=current_player, _x=self._game.init())  # type:ignore
 
     def _step(self, state: core.State, action: Array, key) -> State:
