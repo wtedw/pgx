@@ -24,7 +24,7 @@ from pgx._src.types import Array, PRNGKey
 @dataclass
 class State(core.State):
     current_player: Array = jnp.int32(0)
-    observation: Array = jnp.zeros((6, 7, 2), dtype=jnp.bool_)
+    observation: Array = jnp.zeros((6, 7, 3), dtype=jnp.bool_)
     rewards: Array = jnp.float32([0.0, 0.0])
     terminated: Array = jnp.bool_(False)
     truncated: Array = jnp.bool_(False)

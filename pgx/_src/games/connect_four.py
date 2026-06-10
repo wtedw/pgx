@@ -49,11 +49,11 @@ class Game:
         )
 
     def observe(self, state: GameState, color: Optional[Array] = None) -> Array:
-        def make(turn):
-            return state.board.reshape(6, 7) == turn
-
-        turns = jax.lax.select(color == 0, jnp.int32([0, 1]), jnp.int32([1, 0]))
-        return jnp.stack(jax.vmap(make)(turns), -1)
+        board = state.board.reshape(6, 7)
+        my_board = board == color
+        opp_board = board == (1 - color)
+        ones = jnp.ones_like(my_board)
+        return jnp.stack([my_board, opp_board, ones], 2, dtype=jnp.bool_)
 
     def legal_action_mask(self, state: GameState) -> Array:
         board2d = state.board.reshape(6, 7)
