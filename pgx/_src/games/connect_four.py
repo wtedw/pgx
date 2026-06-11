@@ -38,13 +38,19 @@ class Game:
 
     def step(self, state: GameState, action: Array) -> GameState:
         board2d = state.board.reshape(6, 7)
-        num_filled = (board2d[:, action] >= 0).sum()
-        board2d = board2d.at[5 - num_filled, action].set(state.color)
-        won = ((board2d.flatten()[IDX] == state.color).all(axis=1)).any()
+        # Read the target column via a one-hot matmul instead of a dynamic gather.
+        col = board2d @ jax.nn.one_hot(action, 7, dtype=board2d.dtype)
+        num_filled = (col >= 0).sum()
+        # Place the stone via a one-hot add instead of a scatter (empty=-1 -> color).
+        flat_idx = (5 - num_filled) * 7 + action
+        board = state.board + jax.nn.one_hot(flat_idx, 42, dtype=state.board.dtype) * (state.color + 1)
+        # Win check via a precomputed [69, 42] line-mask matmul instead of a gather.
+        owned = (board == state.color).astype(jnp.float32)
+        won = (WIN_MASKS @ owned == 4).any()
         winner = jax.lax.select(won, state.color, -1)
         return state._replace(  # type: ignore
             color=1 - state.color,
-            board=board2d.flatten(),
+            board=board,
             winner=winner,
         )
 
@@ -97,3 +103,5 @@ def _make_win_cache():
 
 
 IDX = _make_win_cache()
+# [69, 42] line-membership matrix: row i has 1s at the 4 cells of win line i.
+WIN_MASKS = jax.nn.one_hot(IDX, 42, dtype=jnp.float32).sum(axis=1)
