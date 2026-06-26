@@ -32,7 +32,6 @@ class State(core.State):
     legal_action_mask: Array = jnp.ones(19 * 19 + 1, dtype=jnp.bool_)
     observation: Array = jnp.zeros((19, 19, 17), dtype=jnp.bool_)
     _step_count: Array = jnp.int32(0)
-    _player_order: Array = jnp.int32([0, 1])  # [0, 1] or [1, 0]
     _x: go.GameState = go.GameState()
 
     @property
@@ -60,13 +59,11 @@ class Go(core.Env):
         )
 
     def _init(self, key: PRNGKey) -> State:
-        _player_order = jnp.array([[0, 1], [1, 0]])[jax.random.bernoulli(key).astype(jnp.int32)]
         x = self._game.init()
         size = self._game.size
         return State(  # type:ignore
-            current_player=_player_order[x.color],
+            current_player=jnp.int32(0),  # First player always starts
             legal_action_mask=jnp.ones(size * size + 1, dtype=jnp.bool_),
-            _player_order=_player_order,
             _x=x,
         )
 
@@ -75,9 +72,9 @@ class Go(core.Env):
         assert isinstance(state, State)
         x = self._game.step(state._x, action)
         return state.replace(  # type:ignore
-            current_player=state._player_order[x.color],
+            current_player=1 - state.current_player,
             legal_action_mask=self._game.legal_action_mask(x),
-            rewards=self._game.rewards(x)[state._player_order],
+            rewards=self._game.rewards(x),
             terminated=self._game.is_terminal(x),
             _x=x,
         )
