@@ -36,7 +36,7 @@ observe = jax.jit(env.observe)
 def test_init():
     key = jax.random.PRNGKey(0)
     state = init(key=key)
-    assert state.current_player == 1
+    assert state.current_player == 0
 
 
 def test_end_by_pass():
@@ -63,7 +63,7 @@ def test_step():
     """
     key = jax.random.PRNGKey(0)
     state = init(key=key)
-    assert state.current_player == 1
+    assert state.current_player == 0
 
     state = step(state=state, action=12)  # BLACK
     state = step(state=state, action=11)  # WHITE
@@ -108,8 +108,8 @@ def test_step():
     assert (jnp.clip(state._x.board, -1, 1) == expected_board.ravel()).all()
     assert state.terminated
 
-    # 同点なのでコミの分 黒 == player_1 の負け
-    assert (state.rewards == jnp.array([1, -1])).all()
+    # 同点なのでコミの分 黒 == player_0 の負け
+    assert (state.rewards == jnp.array([-1, 1])).all()
 
 
 def test_from_sgf():
@@ -180,7 +180,7 @@ def test_ko():
     key = jax.random.PRNGKey(0)
 
     state: State = init(key=key)
-    assert state.current_player == 1
+    assert state.current_player == 0
     state = step(state=state, action=2)  # BLACK
     state = step(state=state, action=17)  # WHITE
     state = step(state=state, action=6)  # BLACK
@@ -359,11 +359,11 @@ def test_ko():
 def test_observe():
     key = jax.random.PRNGKey(0)
     state = init(key=key)
-    assert state.current_player == 1
-    # player 0 is white, player 1 is black
-    obs = observe(state, 1)   # black turn, black view
+    assert state.current_player == 0
+    # player 0 is black, player 1 is white
+    obs = observe(state, 0)   # black turn, black view
     assert (obs[:, :, -1] == 0).all()
-    obs = observe(state, 0)   # black turn, white view
+    obs = observe(state, 1)   # black turn, white view
     assert (obs[:, :, -1] == 1).all()
 
     state = step(state=state, action=0)
@@ -389,15 +389,15 @@ def test_observe():
          [ 0,  0,  0,  0, 0]]
     )
     # fmt: on
-    assert state.current_player == 1
+    assert state.current_player == 0
     assert state._x.color % 2 == 0  # black turn
-    obs = observe(state, 0)   # white
+    obs = observe(state, 1)   # white
     assert obs.shape == (5, 5, 17)
     assert (obs[:, :, 0] == (curr_board == -1)).all()
     assert (obs[:, :, 1] == (curr_board == 1)).all()
     assert (obs[:, :, -1] == 1).all()
 
-    obs = observe(state, 1)  # black
+    obs = observe(state, 0)  # black
     assert obs.shape == (5, 5, 17)
     assert (obs[:, :, 0] == (curr_board == 1)).all()
     assert (obs[:, :, 1] == (curr_board == -1)).all()
@@ -1195,8 +1195,8 @@ def test_PSK():
     #  + @ O O O
     #  @ @ @ O +
     assert state.terminated
-    # assert state._x._black_player == 1
-    assert (state.rewards == jnp.float32([-1, 1])).all()  # black wins
+    # assert state._x._black_player == 0
+    assert (state.rewards == jnp.float32([1, -1])).all()  # black wins
 
 
 def test_max_step_termination():

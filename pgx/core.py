@@ -268,13 +268,12 @@ class Env(abc.ABC):
             lambda: self._step(state.replace(_step_count=state._step_count + 1), action, key),  # type: ignore
         )
 
-        # [optimization]
-        # note that we might take illegal action but win the game, also might possibly lose too?
-        # in either case, we mask out illegal actions, so we can let the value be anything
-        penalty = self._illegal_action_penalty
-        maybe_illegal_rewards = state.rewards + jnp.full_like(state.rewards, is_illegal * penalty)
-        maybe_terminated = state.terminated | is_illegal
-        state = state.replace(rewards=maybe_illegal_rewards, terminated=maybe_terminated)  # type: ignore
+        # Taking illegal action leads to immediate game terminal with negative reward
+        state = jax.lax.cond(
+            is_illegal,
+            lambda: self._step_with_illegal_action(state, current_player),
+            lambda: state,
+        )
 
         # All legal_action_mask elements are **TRUE** at terminal state
         # This is to avoid zero-division error when normalizing action probability
@@ -350,7 +349,8 @@ class Env(abc.ABC):
 
     def _step_with_illegal_action(self, state: State, loser: Array) -> State:
         penalty = self._illegal_action_penalty
-        reward = jnp.full_like(state.rewards, penalty)
+        reward = jnp.ones_like(state.rewards) * (-1 * penalty) * (self.num_players - 1)
+        reward = reward.at[loser].set(penalty)
         return state.replace(rewards=reward, terminated=TRUE)  # type: ignore
 
 
