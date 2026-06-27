@@ -430,27 +430,28 @@ def make(env_id: EnvId):  # noqa: C901
     elif env_id == "go_3x3":
         from pgx.go import Go
 
-        return Go(size=3, komi=7.5)
+        return Go(size=3, komi=8.5)
     elif env_id == "go_4x4":
         from pgx.go import Go
 
-        return Go(size=4, komi=7.5)
+        return Go(size=4, komi=1.5)
     elif env_id == "go_5x5":
         from pgx.go import Go
 
-        return Go(size=5, komi=7.5)
+        return Go(size=5, komi=24.5)
     elif env_id == "go_6x6":
         from pgx.go import Go
 
-        return Go(size=6, komi=7.5)
+        return Go(size=6, komi=3.5)
     elif env_id == "go_7x7":
         from pgx.go import Go
 
-        return Go(size=7, komi=7.5)
+        return Go(size=7, komi=8.5)
     elif env_id == "go_8x8":
         from pgx.go import Go
 
-        return Go(size=8, komi=7.5)
+        return Go(size=8, komi=9.5)
+    # all Go boards <= 8x8 have komi set to `fair_komi - 0.5`
     elif env_id == "go_9x9":
         from pgx.go import Go
 
