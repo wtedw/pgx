@@ -236,21 +236,38 @@ def _is_psk(state: GameState):
 
 
 def _count_scores(state: GameState, size):
-    def calc_point(c):
-        return _count_ji(state, c, size) + jnp.count_nonzero(state.board * c > 0)
+    # Tromp-Taylor area score for both colors. Territory is found by flooding the empty
+    # points reachable from each color's opponent; whatever empty stays unreached is that
+    # color's territory. The two color floods run on the same graph, so we batch them into
+    # a single (N, 2) flood instead of two separate while_loops: column 0 floods from white
+    # (-> black's territory), column 1 floods from black (-> white's territory). On the MXU
+    # a width-2 matmul costs ~the same as width-1, so this ~halves the dominant flood cost
+    # (one dot_general + one reduce_or per iteration instead of two). Bit-exact: the columns
+    # are independent and share the same fixed point.
+    b0 = jnp.clip(state.board, -1, 1)  # black: +1, white: -1
+    boards = jnp.stack([b0, -b0], axis=1)  # (N, 2): per color, my stone: +1, opp stone: -1
+    adj = ADJ[size]
 
-    return jax.vmap(calc_point)(jnp.int32([1, -1]))
+    def fill_opp(x):
+        b, _ = x  # (N, 2)
+        adj_has_opp = (adj @ (b == -1).astype(jnp.int32)) > 0  # one matmul for both colors
+        mask = (b == 0) & adj_has_opp
+        return jnp.where(mask, -1, b), mask.any()
+
+    boards, _ = lax.while_loop(lambda x: x[1], fill_opp, (boards, True))
+    territory = (boards == 0).sum(axis=0)  # (2,): (black territory, white territory)
+    stones = jnp.array([jnp.count_nonzero(state.board > 0), jnp.count_nonzero(state.board < 0)])
+    return territory + stones
 
 
 def _count_ji(state: GameState, color: int, size: int):
+    # Single-color territory count (empty points reachable only through my stones). Kept
+    # for tests; the scoring hot path uses the batched two-color flood in _count_scores.
     board = jnp.clip(state.board * color, -1, 1)  # my stone: 1, opp stone: -1
     adj = ADJ[size]
 
     def fill_opp(x):
         b, _ = x
-        # true if empty and adjacent to opponent's stone. The "has an opponent neighbor"
-        # test is (ADJ @ (b == -1)) > 0, replacing the per-iteration gather b[adj_mat]
-        # that dominated the flood-fill (while.37) on TPU.
         adj_has_opp = (adj @ (b == -1).astype(jnp.int32)) > 0
         mask = (b == 0) & adj_has_opp
         return jnp.where(mask, -1, b), mask.any()
