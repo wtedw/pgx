@@ -163,31 +163,31 @@ def _apply_action(state: GameState, action, size) -> GameState:
 
 
 def _count(state: GameState, size):
-    # Pseudo-liberty counting. Rewritten from per-cell gathers
-    # (state[adj_ixs]) + an (N, N) broadcast-compare into two matmuls
-    N = size * size
     board = jnp.abs(state.board)
     is_empty = board == 0
-    arange1 = jnp.arange(1, N + 1)
-    feats = jnp.stack(
-        [is_empty.astype(jnp.int32), jnp.where(is_empty, arange1, 0), jnp.where(is_empty, arange1**2, 0)],
-        axis=1,
-    )  # (N, 3): per-cell (is_empty, idx, idx^2)
+    idx_sum = jnp.where(is_empty, jnp.arange(1, size**2 + 1), 0)
+    idx_squared_sum = jnp.where(is_empty, jnp.arange(1, size**2 + 1) ** 2, 0)
 
-    # ADJ[p, q] = 1 iff q is an on-board neighbor of p. Static given `size`, so XLA
-    # constant-folds it. Neighbor aggregation is then ADJ @ feats (replaces the
-    # vmapped gather over adj_ixs).
-    adj = jax.vmap(lambda xy: _adj_ixs(xy, size))(jnp.arange(N))  # (N, 4)
-    on_board = adj != -1
-    ADJ = (jax.nn.one_hot(jnp.where(on_board, adj, 0), N, dtype=jnp.int32) * on_board[..., None]).sum(axis=1)
-    neigh = ADJ @ feats  # (N, 3): per-cell (num_pseudo, idx_sum, idx_squared_sum)
+    def _count_neighbor(xy):
+        adj_ixs = _adj_ixs(xy, size)
+        on_board = adj_ixs != -1
+        return (
+            jnp.where(on_board, is_empty[adj_ixs], 0).sum(),
+            jnp.where(on_board, idx_sum[adj_ixs], 0).sum(),
+            jnp.where(on_board, idx_squared_sum[adj_ixs], 0).sum(),
+        )
 
-    # Segment-sum the per-cell neighbor features by chain id via a one-hot matmul
-    # (replaces vmap over (board == x + 1) for every candidate chain id). Class 0 is
-    # "empty"; chain id k lives in column k, and the caller indexes result[id - 1].
-    onehot = jax.nn.one_hot(board, N + 1, dtype=jnp.int32)  # (N, N+1)
-    chain = (onehot.T @ neigh)[1:]  # (N, 3): drop the empty class
-    return chain[:, 0], chain[:, 1], chain[:, 2]
+    idx = jnp.arange(size**2)
+    num_pseudo, idx_sum, idx_squared_sum = jax.vmap(_count_neighbor)(idx)
+
+    def count_all(x):
+        return (
+            jnp.where(board == x + 1, num_pseudo, 0).sum(),
+            jnp.where(board == x + 1, idx_sum, 0).sum(),
+            jnp.where(board == x + 1, idx_squared_sum, 0).sum(),
+        )
+
+    return jax.vmap(count_all)(idx)
 
 
 def _signs(color):
