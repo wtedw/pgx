@@ -15,10 +15,26 @@
 from typing import NamedTuple, Optional
 
 import jax
+import numpy as np
 from jax import Array, lax
 from jax import numpy as jnp
 
 ZOBRIST_BOARD = jax.random.randint(jax.random.PRNGKey(12345), (3, 19 * 19, 2), 0, 2**31 - 1, jnp.uint32)
+
+# ADJ[size][p, q] = 1 iff q is an on-board 4-neighbor of p. Precomputed numpy constants so
+# that neighbor aggregation (summing/any-ing over neighbors) becomes a single matmul
+# `ADJ @ vec`.
+ADJ = {}
+for _size in range(1, 20):
+    _n = _size * _size
+    _adj = np.zeros((_n, _n), dtype=np.int32)
+    for _xy in range(_n):
+        _r, _c = _xy // _size, _xy % _size
+        for _dr, _dc in ((-1, 0), (1, 0), (0, -1), (0, 1)):
+            _nr, _nc = _r + _dr, _c + _dc
+            if 0 <= _nr < _size and 0 <= _nc < _size:
+                _adj[_xy, _nr * _size + _nc] = 1
+    ADJ[_size] = _adj
 
 
 class GameState(NamedTuple):
@@ -90,18 +106,16 @@ class Game:
         # some logic is inspired by OpenSpiel's Go implementation
         is_empty = state.board == 0
         my_sign, opp_sign = _signs(state.color)
-        num_pseudo, idx_sum, idx_squared_sum = _count(state, self.size)
-        chain_ix = jnp.abs(state.board) - 1
-        in_atari = (idx_sum[chain_ix] ** 2) == idx_squared_sum[chain_ix] * num_pseudo[chain_ix]
+        in_atari = _atari_per_cell(state, self.size)
         has_liberty = (state.board * my_sign > 0) & ~in_atari
         can_kill = (state.board * opp_sign > 0) & in_atari
 
-        def is_adj_ok(xy):
-            adj_ixs = _adj_ixs(xy, self.size)
-            on_board = adj_ixs != -1
-            return (on_board & (is_empty[adj_ixs] | can_kill[adj_ixs] | has_liberty[adj_ixs])).any()
-
-        mask = is_empty & jax.vmap(is_adj_ok)(jnp.arange(self.size**2))
+        # A move is legal if the empty point has a neighbor that is empty, killable, or a
+        # friendly chain with a liberty. "has such a neighbor" = (ADJ @ ok) > 0, replacing
+        # the vmapped per-cell neighbor gather.
+        ok = (is_empty | can_kill | has_liberty).astype(jnp.int32)
+        adj_ok = (ADJ[self.size] @ ok) > 0
+        mask = is_empty & adj_ok
         mask = lax.select(state.ko == -1, mask, mask.at[state.ko].set(False))
         return jnp.append(mask, True)  # pass is always legal
 
@@ -174,13 +188,8 @@ def _count(state: GameState, size):
         axis=1,
     )  # (N, 3): per-cell (is_empty, idx, idx^2)
 
-    # ADJ[p, q] = 1 iff q is an on-board neighbor of p. Static given `size`, so XLA
-    # constant-folds it. Neighbor aggregation is then ADJ @ feats (replaces the
-    # vmapped gather over adj_ixs).
-    adj = jax.vmap(lambda xy: _adj_ixs(xy, size))(jnp.arange(N))  # (N, 4)
-    on_board = adj != -1
-    ADJ = (jax.nn.one_hot(jnp.where(on_board, adj, 0), N, dtype=jnp.int32) * on_board[..., None]).sum(axis=1)
-    neigh = ADJ @ feats  # (N, 3): per-cell (num_pseudo, idx_sum, idx_squared_sum)
+    # Neighbor aggregation as a single matmul (replaces the vmapped gather over adj_ixs).
+    neigh = ADJ[size] @ feats  # (N, 3): per-cell (num_pseudo, idx_sum, idx_squared_sum)
 
     # Segment-sum the per-cell neighbor features by chain id via a one-hot matmul
     # (replaces vmap over (board == x + 1) for every candidate chain id). Class 0 is
@@ -188,6 +197,18 @@ def _count(state: GameState, size):
     onehot = jax.nn.one_hot(board, N + 1, dtype=jnp.int32)  # (N, N+1)
     chain = (onehot.T @ neigh)[1:]  # (N, 3): drop the empty class
     return chain[:, 0], chain[:, 1], chain[:, 2]
+
+
+def _atari_per_cell(state: GameState, size) -> Array:
+    """(N,) bool: True where a cell's chain is in atari (single liberty). Empty cells
+    are False. Replaces the per-chain gather `idx_sum[abs(board) - 1]` in
+    legal_action_mask with a one-hot matmul: compute the atari predicate per chain,
+    then scatter it back to cells. Integer math (see _count) is preserved."""
+    num_pseudo, idx_sum, idx_squared_sum = _count(state, size)
+    atari_chain = (idx_sum**2) == (idx_squared_sum * num_pseudo)  # (N,) indexed by chain_id - 1
+    board = jnp.abs(state.board)
+    onehot = jax.nn.one_hot(board - 1, size * size, dtype=jnp.int32)  # (N, N); empty -> all-zero row
+    return (onehot @ atari_chain.astype(jnp.int32)) > 0
 
 
 def _signs(color):
@@ -223,12 +244,15 @@ def _count_scores(state: GameState, size):
 
 def _count_ji(state: GameState, color: int, size: int):
     board = jnp.clip(state.board * color, -1, 1)  # my stone: 1, opp stone: -1
-    adj_mat = jax.vmap(_adj_ixs, in_axes=(0, None))(jnp.arange(size**2), size)  # (size**2, 4)
+    adj = ADJ[size]
 
     def fill_opp(x):
         b, _ = x
-        # true if empty and adjacent to opponent's stone
-        mask = (b == 0) & ((adj_mat != -1) & (b[adj_mat] == -1)).any(axis=1)
+        # true if empty and adjacent to opponent's stone. The "has an opponent neighbor"
+        # test is (ADJ @ (b == -1)) > 0, replacing the per-iteration gather b[adj_mat]
+        # that dominated the flood-fill (while.37) on TPU.
+        adj_has_opp = (adj @ (b == -1).astype(jnp.int32)) > 0
+        mask = (b == 0) & adj_has_opp
         return jnp.where(mask, -1, b), mask.any()
 
     board, _ = lax.while_loop(lambda x: x[1], fill_opp, (board, True))
